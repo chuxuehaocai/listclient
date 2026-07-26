@@ -4,14 +4,20 @@ import dev.naominet.listclient.eventBus.EventTarget;
 import dev.naominet.listclient.eventBus.events.EventRender2D;
 import dev.naominet.listclient.module.Category;
 import dev.naominet.listclient.module.Module;
-import dev.naominet.listclient.utils.RenderUtils;
+import dev.naominet.listclient.ui.theme.M3;
+import dev.naominet.listclient.utils.Lang;
+import dev.naominet.listclient.utils.font.TTFFontRenderer;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.world.item.ItemStack;
 
-import java.awt.*;
 import java.util.List;
 
 public class InventoryDisplay  extends Module {
+
+    private static final int HEADER_H = 12;
+
+    private final TTFFontRenderer headerFont = M3.label();
+
     public InventoryDisplay() {
         super("InventoryDisplay", Category.Render);
     }
@@ -25,20 +31,26 @@ public class InventoryDisplay  extends Module {
         int boxHeight = 70;
 
         setXYWH(getX(), getY(), boxWidth, boxHeight);
-        RenderUtils.drawShadow(extractor, (float) getX(), (float) getY(), boxWidth, boxHeight);
 
-        // Background
-        extractor.fill((int) getX(), (int) getY(), (int) (getX() + boxWidth), (int) (getY() + boxHeight), new Color(0, 0, 0, 115).getRGB());
+        int x = (int) getX();
+        int y = (int) getY();
 
-        // Header
-        extractor.fill((int) getX(), (int) getY(), (int) (getX() + boxWidth), (int) (getY() + 12), new Color(0, 0, 0, 150).getRGB());
-        extractor.text(mc.font, "Inventory", (int) (getX() + 4), (int) (getY() + 2), -1);
+        // Panel: surface container, medium shape; translucent for game visibility.
+        M3.shadow(extractor, x, y, boxWidth, boxHeight, M3.SHAPE_M);
+        M3.roundRect(extractor, x, y + HEADER_H, boxWidth, boxHeight - HEADER_H,
+                M3.SHAPE_M, M3.withAlpha(M3.SURFACE_CONTAINER, 0xE6), false, false, true, true);
+
+        // Header strip one container step above the panel.
+        M3.roundRect(extractor, x, y, boxWidth, HEADER_H,
+                M3.SHAPE_M, M3.withAlpha(M3.SURFACE_CONTAINER_HIGH, 0xE6), true, true, false, false);
+        headerFont.drawString(extractor, Lang.tr("hud.inventory"), x + 4,
+                y + (HEADER_H - headerFont.lineHeight()) / 2f, M3.ON_SURFACE);
 
         // Items rendering
         List<ItemStack> mainStacks = mc.player.getInventory().getNonEquipmentItems();
 
-        int startX = (int) (getX() + 4);
-        int startY = (int) (getY() + 14);
+        int startX = x + 4;
+        int startY = y + HEADER_H + 2;
         int itemSize = 16;
         int spacing = 2;
         int itemsPerRow = 9;
@@ -58,4 +70,5 @@ public class InventoryDisplay  extends Module {
             }
         }
     }
+
 }

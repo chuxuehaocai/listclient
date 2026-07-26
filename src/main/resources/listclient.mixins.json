@@ -10,6 +10,7 @@
     "mixins.MixinCapeLayer",
     "mixins.MixinChatScreen",
     "mixins.MixinConnection",
+    "mixins.MixinGui",
     "mixins.MixinHud",
     "mixins.MixinKeyboardHandler",
     "mixins.MixinLocalPlayer",

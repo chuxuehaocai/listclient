@@ -6,6 +6,7 @@ import dev.naominet.listclient.module.misc.NoCommands;
 import dev.naominet.listclient.module.movement.Fly;
 import dev.naominet.listclient.module.movement.Speed;
 import dev.naominet.listclient.module.movement.Sprint;
+import dev.naominet.listclient.module.render.ClickGui;
 import dev.naominet.listclient.module.render.Interface;
 import dev.naominet.listclient.module.render.InventoryDisplay;
 import dev.naominet.listclient.module.render.MusicPlayer;
@@ -35,6 +36,7 @@ public class ModuleManager implements ConfigWriter {
         modules.add(new Fly());
         modules.add(new InventoryDisplay());
         modules.add(new MusicPlayer());
+        modules.add(new ClickGui());
     }
 
     public ArrayList<Module> getModules() {

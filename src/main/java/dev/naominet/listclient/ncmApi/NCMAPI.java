@@ -853,6 +853,33 @@ public class NCMAPI {
         return id;
     }
 
+    /**
+     * Public accessor for raw cover-image bytes, used by the Monet seed
+     * extractor. Expected to run on a background executor thread (never the
+     * render thread). Reuses the same fetch / normalize / fallback logic as
+     * {@link #downloadImage}. Returns {@code null} when the image can't be
+     * fetched or looks like an HTML error page – callers must tolerate null.
+     */
+    public byte[] fetchCoverBytes(String url) {
+        if (url == null || url.isEmpty()) {
+            return null;
+        }
+        byte[] body = fetchImageBytes(normalizeImageUrl(url, 300));
+        if (body == null || body.length < 32 || looksLikeHtml(body)) {
+            body = fetchImageBytes(stripImageParams(url));
+        }
+        if (body == null || body.length < 32 || looksLikeHtml(body)) {
+            String https = forceHttps(url);
+            if (!https.equals(url)) {
+                body = fetchImageBytes(normalizeImageUrl(https, 300));
+            }
+        }
+        if (body == null || body.length < 32 || looksLikeHtml(body)) {
+            return null;
+        }
+        return body;
+    }
+
     /** Like fetchImageBytes but sends no Accept header so the CDN picks its default (usually JPEG). */
     private byte[] fetchImageBytesPlain(String fetchUrl) {
         try {

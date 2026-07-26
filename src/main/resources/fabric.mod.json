@@ -13,6 +13,7 @@
   "mixins": [
     "listclient.mixins.json"
   ],
+  "accessWidener": "waigua.accesswidener",
   "depends": {
     "fabricloader": ">=${loader_version}",
     "fabric-api": "*",

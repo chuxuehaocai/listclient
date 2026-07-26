@@ -12,15 +12,24 @@ import dev.naominet.listclient.ncmApi.NcmPlaylist;
 import dev.naominet.listclient.ncmApi.NcmSong;
 import dev.naominet.listclient.ncmApi.NcmUser;
 import dev.naominet.listclient.ui.MusicPlayerScreen;
+import dev.naominet.listclient.ui.theme.Icons;
+import dev.naominet.listclient.ui.theme.M3;
+import dev.naominet.listclient.ui.theme.MonetColor;
+import dev.naominet.listclient.ui.theme.MonetTheme;
+import dev.naominet.listclient.utils.Lang;
 import dev.naominet.listclient.utils.MouseData;
 import dev.naominet.listclient.utils.NcmAudioPlayer;
 import dev.naominet.listclient.utils.Pair;
 import dev.naominet.listclient.utils.RenderUtils;
+import dev.naominet.listclient.utils.font.TTFFontRenderer;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.resources.Identifier;
 
 import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import javax.imageio.ImageIO;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -43,9 +52,6 @@ public class MusicPlayer extends Module {
     public static MusicPlayer instance;
 
     /** Material Light Blue 400 */
-
-    // ---- Debug toggle ----
-    public final Option debug = new Option("Debug", true);
     public static final Color ACCENT = new Color(0x29, 0xB6, 0xF6);
     public static final Color ACCENT_DARK = new Color(0x02, 0x88, 0xD1);
     public static final Color ACCENT_DIM = new Color(0x29, 0xB6, 0xF6, 120);
@@ -55,17 +61,23 @@ public class MusicPlayer extends Module {
     public static final int WIDGET_H = 36;
 
     public enum Page {
-        HOME("首页"),
-        SEARCH("搜索"),
-        MINE("我的"),
-        FM("私人FM"),
-        PLAYLIST("歌单"),
-        LOGIN("扫码登录");
+        HOME("music.page.home"),
+        SEARCH("music.page.search"),
+        MINE("music.page.mine"),
+        FM("music.page.fm"),
+        PLAYLIST("music.page.playlist"),
+        LOGIN("music.page.login");
 
-        public final String label;
+        /** Translation key – resolve via {@link #label()} at draw time. */
+        public final String key;
 
-        Page(String label) {
-            this.label = label;
+        Page(String key) {
+            this.key = key;
+        }
+
+        /** Translated label; resolved on every call so language switches apply live. */
+        public String label() {
+            return Lang.tr(key);
         }
     }
 
@@ -133,7 +145,7 @@ public class MusicPlayer extends Module {
     /* qr login */
     public Identifier qrTexture;
     public String qrUniKey = "";
-    public String qrStatusText = "点击刷新二维码";
+    public String qrStatusText = Lang.tr("music.status.qr_idle");
     public int qrCode = -1;
     public long lastQrPollMs;
     public long lastQrRefreshMs;
@@ -146,7 +158,6 @@ public class MusicPlayer extends Module {
     public MusicPlayer() {
         super("MusicPlayer", Category.Render);
         instance = this;
-        addValues(debug);
         setKeyCode(InputConstants.KEY_M);
         // Default mini-widget anchor (Interface hosts the actual drawing).
         setXYWH(4, 120, WIDGET_W, WIDGET_H);
@@ -167,13 +178,15 @@ public class MusicPlayer extends Module {
 
     @Override
     public void onEnable() {
-        ensureSession();
-        openScreen();
         setSuffix("Screen");
-        // Entry-only: release the enable latch on the next client tick so the
-        // module list doesn't treat MusicPlayer as a permanent HUD owner.
-        // Audio + widget live on Interface / the audio singleton.
+        // Defer to the render thread: setEnable can arrive from the netty
+        // thread (.toggle command intercepts outgoing packets in
+        // Connection.doSendPacket) and setScreen off-thread crashes the game.
+        // Entry-only: release the enable latch afterwards so the module list
+        // doesn't treat MusicPlayer as a permanent HUD owner.
         mc.execute(() -> {
+            ensureSession();
+            openScreen();
             if (isEnable()) {
                 setEnable(false);
             }
@@ -212,7 +225,7 @@ public class MusicPlayer extends Module {
             return;
         }
         sessionStarted = true;
-        statusText = "就绪";
+        statusText = Lang.tr("music.status.ready");
         if (api().hasCookie()) {
             refreshUserAndHome();
         } else {
@@ -229,6 +242,10 @@ public class MusicPlayer extends Module {
      * so the control is draggable via {@link #mouseClick}/{@link #doDrag}.
      */
     public void renderWidget(GuiGraphicsExtractor g) {
+        // Render thread, once per frame: ease the Monet seed + re-apply the M3
+        // scheme so the mini player animates its color morph even with the full
+        // screen closed. Cheap on steady state.
+        MonetTheme.update();
         ensureSession();
         tickQrPoll();
         tickBanner();
@@ -240,10 +257,9 @@ public class MusicPlayer extends Module {
         int x = (int) getX();
         int y = (int) getY();
 
-        RenderUtils.drawShadow(g, x, y, w, h);
-        g.fill(x, y, x + w, y + h, new Color(18, 24, 32, 210).getRGB());
-        // accent strip
-        g.fill(x, y, x + 2, y + h, ACCENT.getRGB());
+        // M3 card: surface container, medium shape; translucent for game visibility.
+        M3.shadow(g, x, y, w, h, M3.SHAPE_M);
+        M3.roundRect(g, x, y, w, h, M3.SHAPE_M, M3.withAlpha(M3.SURFACE_CONTAINER, 0xE6));
 
         // cover = square album art; fall back to circular user avatar only when idle
         int artSize = 28;
@@ -263,52 +279,57 @@ public class MusicPlayer extends Module {
             }
         }
         if (art == null) {
-            g.fill(ax, ay, ax + artSize, ay + artSize, new Color(40, 55, 70).getRGB());
+            M3.roundRect(g, ax, ay, artSize, artSize, M3.SHAPE_XS, M3.SURFACE_CONTAINER_HIGH);
         }
 
+        TTFFontRenderer titleFont = M3.label();
+        TTFFontRenderer subFont = M3.labelSmall();
         int textX = ax + artSize + 6;
         if (currentSong != null) {
-            g.text(mc.font, ellipsize(currentSong.name, 14), textX, y + 5, 0xFFE8F5FC);
+            titleFont.drawString(g, ellipsize(currentSong.name, 14), textX, y + 4, M3.ON_SURFACE);
             String sub = currentLyricLine();
             if (sub == null || sub.isEmpty()) {
                 sub = currentSong.artists == null ? "" : currentSong.artists;
             }
-            g.pose().pushMatrix();
-            g.pose().scale(0.8f, 0.8f);
-            g.text(mc.font, ellipsize(sub, 16), (int)(textX / 0.8f), (int)((y + 16) / 0.8f), 0xFF90A4AE);
-            g.pose().popMatrix();
+            subFont.drawString(g, ellipsize(sub, 16), textX, y + 15, M3.ON_SURFACE_VARIANT);
             setSuffix(ellipsize(currentSong.name, 12));
         } else if (user != null && user.loggedIn) {
-            g.text(mc.font, ellipsize(user.displayName(), 14), textX, y + 5, 0xFFE8F5FC);
-            g.text(mc.font, "点击打开网易云", textX, y + 16, 0xFF90A4AE);
+            titleFont.drawString(g, ellipsize(user.displayName(), 14), textX, y + 4, M3.ON_SURFACE);
+            subFont.drawString(g, Lang.tr("widget.open_hint"), textX, y + 15, M3.ON_SURFACE_VARIANT);
             setSuffix(user.displayName());
         } else {
-            g.text(mc.font, "MusicPlayer", textX, y + 5, 0xFFE8F5FC);
-            g.text(mc.font, "未登录 · 点击打开", textX, y + 16, 0xFF90A4AE);
+            titleFont.drawString(g, "MusicPlayer", textX, y + 4, M3.ON_SURFACE);
+            subFont.drawString(g, Lang.tr("widget.idle_hint"), textX, y + 15, M3.ON_SURFACE_VARIANT);
             setSuffix("Idle");
         }
 
         // transport hint buttons (visual only; click handled in mouseClick)
         int bx = x + w - 52;
         int by = y + 8;
-        drawMiniBtn(g, bx, by, audio.isPlaying() ? "||" : ">", audio.isPlaying());
-        drawMiniBtn(g, bx + 18, by, ">>", false);
+        drawMiniBtn(g, bx, by, audio.isPlaying() ? Icons.PAUSE : Icons.PLAY_ARROW, audio.isPlaying());
+        drawMiniBtn(g, bx + 18, by, Icons.SKIP_NEXT, false);
 
-        // progress
+        // M3 linear progress: primary indicator on surface-container-highest track.
         float prog = currentSong == null ? 0f : audio.progress();
         int barX = textX;
         int barW = w - (textX - x) - 58;
         int barY = y + h - 5;
-        g.fill(barX, barY, barX + barW, barY + 2, new Color(50, 70, 85, 200).getRGB());
+        g.fill(barX, barY, barX + barW, barY + 2, M3.SURFACE_CONTAINER_HIGHEST);
         if (prog > 0) {
-            g.fill(barX, barY, barX + Math.max(1, (int) (barW * prog)), barY + 2, ACCENT.getRGB());
+            g.fill(barX, barY, barX + Math.max(1, (int) (barW * prog)), barY + 2, M3.PRIMARY);
         }
     }
 
-    private void drawMiniBtn(GuiGraphicsExtractor g, int x, int y, String label, boolean active) {
-        g.fill(x, y, x + 16, y + 12, active ? ACCENT_SOFT.getRGB() : new Color(30, 40, 50, 200).getRGB());
-        int tw = mc.font.width(label);
-        g.text(mc.font, label, x + (16 - tw) / 2, y + 2, active ? ACCENT.getRGB() : 0xFFB0BEC5);
+    /**
+     * Small toggle pill (visual only; hit zones live in {@link #mouseClick}).
+     * Selection is a container ROLE change per M3 (primary when active), not a
+     * state layer – state layers are reserved for transient interaction.
+     */
+    private void drawMiniBtn(GuiGraphicsExtractor g, int x, int y, String icon, boolean active) {
+        int bg = active ? M3.PRIMARY : M3.SECONDARY_CONTAINER;
+        int fg = active ? M3.ON_PRIMARY : M3.ON_SECONDARY_CONTAINER;
+        M3.roundRect(g, x, y, 16, 12, M3.pill(12), bg);
+        Icons.drawCentered(g, icon, 8, x + 8f, y + 6f, fg);
     }
 
     /* widget interaction – independent of module enable flag (Interface hosts it) */
@@ -417,7 +438,9 @@ public class MusicPlayer extends Module {
         } else {
             repeatOne = false;
         }
-        statusText = repeatOne ? "单曲循环" : (shuffle ? "随机播放" : "顺序播放");
+        statusText = repeatOne
+                ? Lang.tr("music.status.repeat_one")
+                : (shuffle ? Lang.tr("music.status.shuffle") : Lang.tr("music.status.sequential"));
     }
 
     public void dispatchAction(String id, int mouseX, int panelX) {
@@ -533,7 +556,7 @@ public class MusicPlayer extends Module {
         if (b.targetId > 0 && (b.targetType == 1 || b.targetType == 0)) {
             NcmSong song = new NcmSong();
             song.id = b.targetId;
-            song.name = b.title == null || b.title.isEmpty() ? "Banner 歌曲" : b.title;
+            song.name = b.title == null || b.title.isEmpty() ? Lang.tr("music.status.banner_song") : b.title;
             playQueue.clear();
             playQueue.add(song);
             queueIndex = 0;
@@ -555,7 +578,7 @@ public class MusicPlayer extends Module {
 
     public void refreshUserAndHome() {
         busy = true;
-        statusText = "校验登录…";
+        statusText = Lang.tr("music.status.checking_login");
         api().async(() -> {
             NcmUser u = api().fetchLoginStatus();
             if (u.loggedIn && u.userId > 0) {
@@ -574,7 +597,7 @@ public class MusicPlayer extends Module {
             this.user = u;
             busy = false;
             if (u.loggedIn) {
-                statusText = "你好, " + u.displayName();
+                statusText = Lang.tr("music.status.hello", u.displayName());
                 qrPolling = false;
                 if (page == Page.LOGIN) {
                     page = Page.HOME;
@@ -582,14 +605,14 @@ public class MusicPlayer extends Module {
                 loadHome();
                 loadMine();
             } else {
-                statusText = "登录已失效";
+                statusText = Lang.tr("music.status.login_expired");
                 api().clearCookie();
                 page = Page.LOGIN;
                 beginQrLogin(false);
             }
         }, ex -> {
             busy = false;
-            errorText = "校验失败: " + ex.getMessage();
+            errorText = Lang.tr("music.status.check_failed", ex.getMessage());
             page = Page.LOGIN;
             beginQrLogin(false);
         });
@@ -597,7 +620,7 @@ public class MusicPlayer extends Module {
 
     public void loadHome() {
         busy = true;
-        statusText = "加载首页…";
+        statusText = Lang.tr("music.loading_home");
         api().async(api()::getHomePage, data -> {
             banners = new CopyOnWriteArrayList<>(data.banners);
             // Already trimmed server-side; don't merge extra playlist sources on first paint.
@@ -608,11 +631,11 @@ public class MusicPlayer extends Module {
             busy = false;
             bannerIndex = 0;
             bannerLastSwitchMs = System.currentTimeMillis();
-            statusText = "首页已更新";
+            statusText = Lang.tr("music.status.home_updated");
         }, ex -> {
             busy = false;
             homeLoaded = true;
-            errorText = "首页加载失败: " + ex.getMessage();
+            errorText = Lang.tr("music.status.home_failed", ex.getMessage());
         });
     }
 
@@ -622,26 +645,26 @@ public class MusicPlayer extends Module {
         api().async(() -> api().getUserPlaylists(user.userId, 12), list -> {
             myPlaylists = new CopyOnWriteArrayList<>(list);
             mineLoaded = true;
-        }, ex -> errorText = "歌单加载失败: " + ex.getMessage());
+        }, ex -> errorText = Lang.tr("music.status.playlists_failed", ex.getMessage()));
     }
 
     public void loadFm() {
         if (user == null || !user.loggedIn) {
-            errorText = "私人 FM 需要登录";
+            errorText = Lang.tr("music.fm_needs_login");
             return;
         }
-        statusText = "拉取私人 FM…";
+        statusText = Lang.tr("music.status.fm_loading");
         api().async(api()::getPersonalFm, list -> {
             fmQueue = new CopyOnWriteArrayList<>(list);
             fmIndex = 0;
-            statusText = "FM " + list.size() + " 首";
+            statusText = "FM " + Lang.tr("music.songs_count", list.size());
             if (!list.isEmpty() && (currentSong == null || !audio.isPlaying())) {
                 playQueue.clear();
                 playQueue.addAll(list);
                 queueIndex = 0;
                 playIndex(0);
             }
-        }, ex -> errorText = "FM 失败: " + ex.getMessage());
+        }, ex -> errorText = Lang.tr("music.status.fm_failed", ex.getMessage()));
     }
 
     public void openPlaylist(NcmPlaylist pl) {
@@ -658,7 +681,9 @@ public class MusicPlayer extends Module {
     public void loadMorePlaylistTracks() {
         if (currentPlaylist == null || busy || !playlistHasMore) return;
         busy = true;
-        statusText = playlistTrackOffset == 0 ? "加载歌单…" : "加载更多…";
+        statusText = playlistTrackOffset == 0
+                ? Lang.tr("music.status.loading_playlist")
+                : Lang.tr("music.status.loading_more");
         final long pid = currentPlaylist.id;
         final int offset = playlistTrackOffset;
         api().async(() -> api().getPlaylistTracks(pid, PLAYLIST_PAGE_SIZE, offset), tracks -> {
@@ -675,11 +700,11 @@ public class MusicPlayer extends Module {
             // Short page ⇒ no more.
             playlistHasMore = tracks.size() >= PLAYLIST_PAGE_SIZE;
             busy = false;
-            statusText = currentPlaylist.name + " · " + playlistTracks.size()
-                    + (playlistHasMore ? "+ 首" : " 首");
+            statusText = currentPlaylist.name + " · "
+                    + Lang.tr("music.songs_count", playlistTracks.size() + (playlistHasMore ? "+" : ""));
         }, ex -> {
             busy = false;
-            errorText = "歌单失败: " + ex.getMessage();
+            errorText = Lang.tr("music.status.playlist_failed", ex.getMessage());
         });
     }
 
@@ -689,19 +714,19 @@ public class MusicPlayer extends Module {
             return;
         }
         searchLoading = true;
-        statusText = "搜索: " + q;
+        statusText = Lang.tr("music.status.searching_for", q);
         api().async(() -> api().searchSongs(q.trim(), 15), list -> {
             searchResults = new CopyOnWriteArrayList<>(list);
             searchLoading = false;
-            statusText = "找到 " + list.size() + " 首";
+            statusText = Lang.tr("music.status.search_found", list.size());
         }, ex -> {
             searchLoading = false;
-            errorText = "搜索失败: " + ex.getMessage();
+            errorText = Lang.tr("music.status.search_failed", ex.getMessage());
         });
     }
 
     public void doLogout() {
-        statusText = "退出中…";
+        statusText = Lang.tr("music.status.logging_out");
         api().async(() -> {
             api().logout();
             return null;
@@ -711,7 +736,7 @@ public class MusicPlayer extends Module {
             myPlaylists = new CopyOnWriteArrayList<>();
             dailySongs = new CopyOnWriteArrayList<>();
             homeLoaded = false;
-            statusText = "已退出登录";
+            statusText = Lang.tr("music.status.logged_out");
             page = Page.LOGIN;
             beginQrLogin(true);
         }, ex -> {
@@ -737,8 +762,8 @@ public class MusicPlayer extends Module {
         qrPolling = false;
         qrCode = -1;
         qrNicknameHint = "";
-        qrStatusText = "正在获取二维码…";
-        statusText = "获取二维码";
+        qrStatusText = Lang.tr("music.status.qr_fetching");
+        statusText = Lang.tr("music.status.qr_fetching");
 
         api().async(() -> api().getLoginQrCode(), pair -> {
             qrTexture = pair.getFirst();
@@ -748,12 +773,12 @@ public class MusicPlayer extends Module {
             lastQrRefreshMs = System.currentTimeMillis();
             lastQrPollMs = 0;
             qrCode = 801;
-            qrStatusText = "等待扫码…";
-            statusText = "请使用网易云 App 扫码";
+            qrStatusText = Lang.tr("music.status.qr_waiting");
+            statusText = Lang.tr("music.status.qr_scan_prompt");
         }, ex -> {
             qrLoading = false;
             qrPolling = false;
-            qrStatusText = "获取失败: " + ex.getMessage();
+            qrStatusText = Lang.tr("music.status.qr_fetch_failed", ex.getMessage());
             errorText = qrStatusText;
         });
     }
@@ -774,23 +799,24 @@ public class MusicPlayer extends Module {
             qrCode = code;
             switch (code) {
                 case 800 -> {
-                    qrStatusText = "二维码已过期，点击刷新";
+                    qrStatusText = Lang.tr("music.status.qr_expired_refresh");
                     qrPolling = false;
                 }
-                case 801 -> qrStatusText = "等待扫码…";
+                case 801 -> qrStatusText = Lang.tr("music.status.qr_waiting");
                 case 802 -> {
-                    qrStatusText = msg.isEmpty() ? "已扫码，请在手机上确认" : msg;
+                    qrStatusText = msg.isEmpty() ? Lang.tr("music.status.qr_scanned_confirm") : msg;
                     qrNicknameHint = msg;
                 }
                 case 803 -> {
-                    qrStatusText = "登录成功！";
+                    qrStatusText = Lang.tr("music.status.login_success");
                     qrPolling = false;
-                    statusText = "登录成功，加载用户…";
+                    statusText = Lang.tr("music.status.login_loading_user");
                     onQrLoginSuccess();
                 }
-                default -> qrStatusText = "状态 " + code + (msg.isEmpty() ? "" : (" · " + msg));
+                default -> qrStatusText = Lang.tr("music.status.qr_state", code)
+                        + (msg.isEmpty() ? "" : (" · " + msg));
             }
-        }, ex -> qrStatusText = "轮询异常: " + ex.getMessage());
+        }, ex -> qrStatusText = Lang.tr("music.status.qr_poll_error", ex.getMessage()));
     }
 
     private void onQrLoginSuccess() {
@@ -813,16 +839,16 @@ public class MusicPlayer extends Module {
         }, u -> {
             this.user = u;
             if (u.loggedIn) {
-                statusText = "欢迎, " + u.displayName();
+                statusText = Lang.tr("music.status.welcome", u.displayName());
                 page = Page.HOME;
                 homeLoaded = false;
                 mineLoaded = false;
                 loadHome();
                 loadMine();
             } else {
-                errorText = "登录成功但资料拉取失败";
+                errorText = Lang.tr("music.status.profile_failed");
             }
-        }, ex -> errorText = "登录后资料失败: " + ex.getMessage());
+        }, ex -> errorText = Lang.tr("music.status.profile_error", ex.getMessage()));
     }
 
     /* ================================================================== */
@@ -836,7 +862,7 @@ public class MusicPlayer extends Module {
         NcmSong song = playQueue.get(index);
         currentSong = song;
         lyrics = new CopyOnWriteArrayList<>();
-        statusText = "获取播放地址…";
+        statusText = Lang.tr("music.status.fetching_url");
         final long id = song.id;
 
         api().async(() -> {
@@ -861,18 +887,54 @@ public class MusicPlayer extends Module {
             if (currentSong == null || currentSong.id != id) return;
             NcmSong full = pair.getFirst();
             currentSong = full;
+            // Now-playing song changed → re-seed the Monet theme from its cover.
+            extractSeedAsync(full.coverUrl);
             if (queueIndex >= 0 && queueIndex < playQueue.size()) {
                 playQueue.set(queueIndex, full);
             }
             lyrics = new CopyOnWriteArrayList<>(pair.getSecond());
             if (full.playUrl == null || full.playUrl.isEmpty()) {
-                errorText = "无可用播放地址 (可能需登录/会员)";
-                statusText = "无法播放";
+                errorText = Lang.tr("music.status.no_play_url");
+                statusText = Lang.tr("music.status.cannot_play");
                 return;
             }
-            statusText = "播放: " + full.name;
+            statusText = Lang.tr("music.status.playing", full.name);
             audio.playUrl(full.playUrl, full.durationMs);
-        }, ex -> errorText = "播放失败: " + ex.getMessage());
+        }, ex -> errorText = Lang.tr("music.status.play_failed", ex.getMessage()));
+    }
+
+    /**
+     * Extract a Monet seed color from the now-playing album cover off-thread and
+     * hand it to {@link MonetTheme}. No cover ⇒ no-op (keeps the last seed). Any
+     * failure (download, decode, empty image) is swallowed – a bad cover must
+     * never crash or spam the theme.
+     */
+    private void extractSeedAsync(String coverUrl) {
+        if (coverUrl == null || coverUrl.isEmpty()) {
+            return;
+        }
+        api().async(() -> {
+            byte[] b = api().fetchCoverBytes(coverUrl);
+            if (b == null || b.length == 0) {
+                return null;
+            }
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(b));
+            if (img == null) {
+                return null;
+            }
+            int w = img.getWidth();
+            int h = img.getHeight();
+            if (w <= 0 || h <= 0) {
+                return null;
+            }
+            int[] argb = img.getRGB(0, 0, w, h, null, 0, w);
+            return MonetColor.seedFromPixels(argb, w, h);
+        }, seed -> {
+            if (seed != null) {
+                MonetTheme.requestSeed(seed);
+            }
+        }, ex -> {
+        });
     }
 
     public void playRelative(int delta) {
@@ -990,23 +1052,14 @@ public class MusicPlayer extends Module {
      */
     public Identifier ensureImage(String url, String key, boolean circular, boolean priority) {
         if (url == null || url.isEmpty()) {
-            if (debug.getValue()) {
-                System.out.println("[MusicPlayer] ensureImage SKIP empty url, key=" + key);
-            }
             return null;
         }
         String cacheKey = circular ? ("c:" + key) : key;
         Identifier cached = imageCache.get(cacheKey);
         if (cached != null) {
-            if (debug.getValue()) {
-                System.out.println("[MusicPlayer] image HIT cache: " + url + "  (key=" + key + ")");
-            }
             return cached;
         }
         if (Boolean.TRUE.equals(imageFailed.get(cacheKey))) {
-            if (debug.getValue()) {
-                System.out.println("[MusicPlayer] image KNOWN FAILED: " + url + "  (key=" + key + ")");
-            }
             return null;
         }
         if (imageLoading.containsKey(cacheKey)) {
@@ -1017,11 +1070,6 @@ public class MusicPlayer extends Module {
         // Already queued?
         if (!isQueued(cacheKey)) {
             ImageJob job = new ImageJob(url, key, cacheKey, circular, priority);
-            if (debug.getValue()) {
-                String kind = circular ? "circle" : "square";
-                String prio = priority ? " [priority]" : "";
-                System.out.println("[MusicPlayer] enqueue image: " + url + "  (key=" + key + ", " + kind + prio + ")");
-            }
             if (priority) {
                 imageQueueHigh.addLast(job);
             } else {
@@ -1063,14 +1111,8 @@ public class MusicPlayer extends Module {
         api().async(() -> api().downloadImage(job.url, job.key, job.circular), id -> {
             if (id != null) {
                 imageCache.put(job.cacheKey, id);
-                if (debug.getValue()) {
-                    System.out.println("[MusicPlayer] image OK: " + job.url + " -> " + id);
-                }
             } else {
                 imageFailed.put(job.cacheKey, true);
-                if (debug.getValue()) {
-                    System.out.println("[MusicPlayer] image NULL: " + job.url);
-                }
             }
             imageLoading.remove(job.cacheKey);
             imagesInFlight = Math.max(0, imagesInFlight - 1);
@@ -1079,9 +1121,6 @@ public class MusicPlayer extends Module {
             imageFailed.put(job.cacheKey, true);
             imageLoading.remove(job.cacheKey);
             imagesInFlight = Math.max(0, imagesInFlight - 1);
-            if (debug.getValue()) {
-                System.out.println("[MusicPlayer] image FAIL: " + job.url + "  reason=" + ex.getMessage());
-            }
             pumpImageQueue();
         });
     }
@@ -1090,6 +1129,8 @@ public class MusicPlayer extends Module {
     public void stopPlayback() {
         audio.stop();
         currentSong = null;
+        // Nothing playing → drop the album-derived seed, ease back to Light Blue.
+        MonetTheme.reset();
     }
 
     public String currentLyricLine() {

@@ -2,11 +2,15 @@ package dev.naominet.listclient.ui;
 
 import dev.naominet.listclient.module.render.MusicPlayer;
 import dev.naominet.listclient.module.render.MusicPlayer.Page;
-import dev.naominet.listclient.ncmApi.NcmBanner;
 import dev.naominet.listclient.ncmApi.NcmPlaylist;
 import dev.naominet.listclient.ncmApi.NcmSong;
+import dev.naominet.listclient.ui.theme.Icons;
+import dev.naominet.listclient.ui.theme.M3;
+import dev.naominet.listclient.ui.theme.MonetTheme;
 import dev.naominet.listclient.utils.AnimationUtils;
+import dev.naominet.listclient.utils.Lang;
 import dev.naominet.listclient.utils.RenderUtils;
+import dev.naominet.listclient.utils.font.TTFFontRenderer;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
@@ -14,40 +18,33 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.Util;
 import org.lwjgl.glfw.GLFW;
 
-import java.awt.Color;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Full-screen (in-game overlay) UI for {@link MusicPlayer}.
  * All session/playback state lives on the module; this class only draws and
- * forwards input.
+ * forwards input. Styled with the client's Material 3 theme ({@link M3}):
+ * tonal surface-container ladder for depth, state layers for hover, and the
+ * MiSans TTF type scale for every string.
  */
 public class MusicPlayerScreen extends Screen {
 
-    private static final int PANEL_W = 420;
-    private static final int PANEL_H = 260;
-    private static final int SIDEBAR_W = 64;
+    private static final int PANEL_W = 340;
+    private static final int PANEL_H = 216;
+    private static final int SIDEBAR_W = 54;
     private static final int HEADER_H = 16;
-    private static final int PLAYER_H = 40;
+    private static final int PLAYER_H = 34;
     private static final int PAD = 6;
 
-    private static final Color BG = new Color(18, 28, 38, 225);
-    private static final Color BG_HEADER = new Color(22, 36, 48, 240);
-    private static final Color BG_SIDEBAR = new Color(16, 28, 38, 240);
-    private static final Color BG_PLAYER = new Color(20, 32, 44, 245);
-    private static final Color BG_CARD = new Color(30, 48, 64, 215);
-    private static final Color BG_CARD_HOVER = new Color(40, 70, 92, 235);
-    /** Material Light Blue 400 */
-    private static final Color ACCENT = MusicPlayer.ACCENT;
-    private static final Color ACCENT_DIM = MusicPlayer.ACCENT_DIM;
-    private static final Color TEXT = new Color(232, 245, 252);
-    private static final Color TEXT_DIM = new Color(144, 164, 174);
-    private static final Color TEXT_MUTED = new Color(96, 125, 139);
-    private static final Color PROGRESS_BG = new Color(50, 70, 85, 200);
-    private static final Color DIVIDER = new Color(41, 182, 246, 30);
+    /** M3 type scale (MiSans) – every string on this screen goes through TTF. */
+    private final TTFFontRenderer titleFont = M3.title();
+    private final TTFFontRenderer bodyFont = M3.body();
+    private final TTFFontRenderer labelFont = M3.label();
+    private final TTFFontRenderer smallFont = M3.labelSmall();
 
     private final MusicPlayer mp;
     private final List<ClickZone> clickZones = new ArrayList<>();
@@ -62,9 +59,17 @@ public class MusicPlayerScreen extends Screen {
     private int dragOffX;
     private int dragOffY;
 
+    /** Open animation: panel scales in from 92% over ~250ms after construction. */
+    private final long openedAt = Util.getMillis();
+
+    /** Page-switch slide: body content eases in from the right on page change. */
+    private Page lastPage;
+    private float slideT = 1f;
+
     public MusicPlayerScreen(MusicPlayer mp) {
         super(Component.literal("MusicPlayer"));
         this.mp = mp;
+        this.lastPage = mp.page;
     }
 
     @Override
@@ -92,60 +97,110 @@ public class MusicPlayerScreen extends Screen {
     @Override
     public void tick() {
         mp.tickQrPoll();
-        mp.tickBanner();
         mp.tickSearchDebounce();
-        mp.homeScroll = AnimationUtils.animationNew(mp.homeScroll, mp.homeScrollTarget, 6f, 0.4f);
-        mp.listScroll = AnimationUtils.animationNew(mp.listScroll, mp.listScrollTarget, 6f, 0.4f);
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
+        // Render thread, once per frame, BEFORE any M3 color is read: ease the
+        // Monet seed toward the album-derived target and re-apply the scheme so
+        // the whole panel morphs color while the screen is open.
+        MonetTheme.update();
         this.mouseX = mouseX;
         this.mouseY = mouseY;
         clickZones.clear();
 
-        // Dim the world behind the panel a bit.
+        // Frosted glass: blur the world behind the panel, then dim it a bit.
+        M3.blurBehind(g);
         extractTransparentBackground(g);
 
         int x = panelX;
         int y = panelY;
 
-        RenderUtils.drawShadow(g, x, y, PANEL_W, PANEL_H);
+        // Scroll animates per FRAME (not per 20Hz tick): easeExp derives its
+        // step from the real frame rate, so this is both smooth and correctly
+        // timed. Exponential ease – fast start, smooth deceleration.
+        mp.homeScroll = AnimationUtils.easeExp(mp.homeScroll, mp.homeScrollTarget, 12f);
+        mp.listScroll = AnimationUtils.easeExp(mp.listScroll, mp.listScrollTarget, 12f);
 
-        fill(g, x, y, PANEL_W, PANEL_H, BG);
-        fill(g, x, y, PANEL_W, HEADER_H, BG_HEADER);
-        fill(g, x, y + HEADER_H, SIDEBAR_W, PANEL_H - HEADER_H - PLAYER_H, BG_SIDEBAR);
-        fill(g, x, y + PANEL_H - PLAYER_H, PANEL_W, PLAYER_H, BG_PLAYER);
-        fill(g, x, y + HEADER_H - 1, PANEL_W, 1, DIVIDER);
-        fill(g, x + SIDEBAR_W, y + HEADER_H, 1, PANEL_H - HEADER_H - PLAYER_H, DIVIDER);
-        fill(g, x, y + PANEL_H - PLAYER_H, PANEL_W, 1, DIVIDER);
+        // Page-switch slide: restart the ease whenever the page changes.
+        if (mp.page != lastPage) {
+            slideT = 0f;
+            lastPage = mp.page;
+        }
+        slideT = AnimationUtils.easeExp(slideT, 1f, 5f);
 
-        drawHeader(g, x, y);
-        drawSidebar(g, x, y);
-
-        // Clip page body so scrolled rows/cards cannot paint over header / player / sidebar.
-        int bodyX = x + SIDEBAR_W + 1;
-        int bodyY = y + HEADER_H;
-        int bodyW = PANEL_W - SIDEBAR_W - 1;
-        int bodyH = PANEL_H - HEADER_H - PLAYER_H;
-        g.enableScissor(bodyX, bodyY, bodyX + bodyW, bodyY + bodyH);
+        // Open animation: scale the whole panel in from 92% around its center
+        // for the first ~250ms. Click zones stay unscaled – the window is tiny.
+        float open = AnimationUtils.easeOutCubic((Util.getMillis() - openedAt) / 250f);
+        boolean opening = open < 0.995f;
+        if (opening) {
+            float cx = x + PANEL_W / 2f;
+            float cy = y + PANEL_H / 2f;
+            float s = 0.92f + 0.08f * open;
+            g.pose().pushMatrix();
+            g.pose().translate(cx, cy);
+            g.pose().scale(s, s);
+            g.pose().translate(-cx, -cy);
+        }
         try {
-            drawPage(g, x, y);
+            // Floating surface over gameplay (busy background) – soft shadow, then a
+            // rounded SURFACE_CONTAINER_LOW silhouette; header / sidebar / player bar
+            // sit one container step above it (tonal elevation).
+            M3.shadow(g, x, y, PANEL_W, PANEL_H, M3.SHAPE_L);
+            M3.roundRect(g, x, y, PANEL_W, PANEL_H, M3.SHAPE_L, M3.SURFACE_CONTAINER_LOW);
+
+            // Header rounded on top only, player bar on the bottom only.
+            M3.roundRect(g, x, y, PANEL_W, HEADER_H, M3.SHAPE_L, M3.SURFACE_CONTAINER,
+                    true, true, false, false);
+
+            // Sidebar lives entirely between the rounded corners – a flat fill is safe.
+            fill(g, x, y + HEADER_H, SIDEBAR_W, PANEL_H - HEADER_H - PLAYER_H, M3.SURFACE_CONTAINER);
+
+            M3.roundRect(g, x, y + PANEL_H - PLAYER_H, PANEL_W, PLAYER_H, M3.SHAPE_L, M3.SURFACE_CONTAINER,
+                    false, false, true, true);
+
+            M3.divider(g, x, y + HEADER_H - 1, PANEL_W);
+            fill(g, x + SIDEBAR_W, y + HEADER_H, 1, PANEL_H - HEADER_H - PLAYER_H, M3.OUTLINE_VARIANT);
+            M3.divider(g, x, y + PANEL_H - PLAYER_H, PANEL_W);
+
+            drawHeader(g, x, y);
+            drawSidebar(g, x, y);
+
+            // Clip page body so scrolled rows/cards cannot paint over header / player / sidebar.
+            int bodyX = x + SIDEBAR_W + 1;
+            int bodyY = y + HEADER_H;
+            int bodyW = PANEL_W - SIDEBAR_W - 1;
+            int bodyH = PANEL_H - HEADER_H - PLAYER_H;
+            g.enableScissor(bodyX, bodyY, bodyX + bodyW, bodyY + bodyH);
+            // Click zones must clip like the pixels do, or scroll-hidden rows keep
+            // stealing clicks from the header / player bar (hitTest is last-wins).
+            pushZoneClip(bodyX, bodyY, bodyX + bodyW, bodyY + bodyH);
+            try {
+                drawPage(g, x, y);
+            } finally {
+                popZoneClip();
+                g.disableScissor();
+            }
+
+            // Chrome above the clipped body.
+            drawPlayerBar(g, x, y);
+
+            if (mp.errorText != null && !mp.errorText.isEmpty()) {
+                String err = MusicPlayer.ellipsize(mp.errorText, 30);
+                smallFont.drawString(g, err, bodyX + 4, bodyY + 2, M3.ERROR);
+            }
+
+            // Close hint – INSIDE the panel (bottom of the sidebar, above the
+            // player bar); anything below the panel could be off-screen.
+            String hint = Lang.tr("music.esc_close");
+            smallFont.drawCenteredString(g, hint, x + SIDEBAR_W / 2f,
+                    y + PANEL_H - PLAYER_H - 11, M3.ON_SURFACE_VARIANT);
         } finally {
-            g.disableScissor();
+            if (opening) {
+                g.pose().popMatrix();
+            }
         }
-
-        // Chrome above the clipped body.
-        drawPlayerBar(g, x, y);
-
-        if (mp.errorText != null && !mp.errorText.isEmpty()) {
-            String err = MusicPlayer.ellipsize(mp.errorText, 40);
-            g.text(font, err, bodyX + 4, bodyY + 2, new Color(255, 120, 120).getRGB());
-        }
-
-        // Close hint
-        String hint = "ESC 关闭界面";
-        g.text(font, hint, x + PANEL_W - font.width(hint) - 6, y + PANEL_H + 4, TEXT_MUTED.getRGB());
     }
 
     /* ================================================================== */
@@ -153,7 +208,8 @@ public class MusicPlayerScreen extends Screen {
     /* ================================================================== */
 
     private void drawHeader(GuiGraphicsExtractor g, int x, int y) {
-        g.text(font, "MusicPlayer", x + 6, y + 4, TEXT.getRGB());
+        titleFont.drawString(g, "MusicPlayer", x + 6,
+                y + (HEADER_H - titleFont.lineHeight()) / 2f, M3.ON_SURFACE);
 
         // circular user avatar only (not album art)
         int avatarSize = 12;
@@ -164,7 +220,8 @@ public class MusicPlayerScreen extends Screen {
             if (avatar != null) {
                 RenderUtils.drawCircularTexture(g, avatar, avatarX, avatarY, avatarSize);
             } else {
-                fill(g, avatarX, avatarY, avatarSize, avatarSize, ACCENT_DIM);
+                M3.roundRect(g, avatarX, avatarY, avatarSize, avatarSize,
+                        M3.pill(avatarSize), M3.SURFACE_CONTAINER_HIGHEST);
             }
         }
 
@@ -173,16 +230,20 @@ public class MusicPlayerScreen extends Screen {
             right = mp.user.displayName();
             if (mp.user.vipType > 0) right += " VIP";
         } else {
-            right = "未登录";
+            right = Lang.tr("music.not_logged_in");
         }
-        int rw = font.width(right);
+        int rw = (int) labelFont.width(right);
         int rightTextX = avatarX - rw - 4;
-        g.text(font, right, rightTextX, y + 4,
-                mp.user != null && mp.user.loggedIn ? ACCENT.getRGB() : TEXT_DIM.getRGB());
+        boolean userHover = isMouseOver(rightTextX - 2, y, rw + avatarSize + 10, HEADER_H);
+        int userColor = mp.user != null && mp.user.loggedIn
+                ? M3.PRIMARY
+                : (userHover ? M3.ON_SURFACE : M3.ON_SURFACE_VARIANT);
+        labelFont.drawString(g, right, rightTextX, y + (HEADER_H - labelFont.lineHeight()) / 2f, userColor);
         addClick(rightTextX - 2, y, rw + avatarSize + 10, HEADER_H, "header_user");
 
         if (mp.statusText != null && !mp.statusText.isEmpty()) {
-            g.text(font, MusicPlayer.ellipsize(mp.statusText, 18), x + 80, y + 4, TEXT_MUTED.getRGB());
+            smallFont.drawString(g, MusicPlayer.ellipsize(mp.statusText, 14), x + 74,
+                    y + (HEADER_H - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
         }
 
         // whole header is a drag handle (except the user label which has its own click)
@@ -196,15 +257,39 @@ public class MusicPlayerScreen extends Screen {
             Page p = items[i];
             int iy = top + i * 22;
             boolean active = mp.page == p || (mp.page == Page.PLAYLIST && p == Page.HOME);
+            boolean hover = isMouseOver(x, iy - 2, SIDEBAR_W, 18);
             if (active) {
-                fill(g, x + 2, iy - 2, SIDEBAR_W - 4, 18, MusicPlayer.ACCENT_SOFT);
-                fill(g, x + 2, iy - 2, 2, 18, ACCENT);
+                // M3 nav item: secondary-container pill, on-secondary-container label.
+                M3.roundRect(g, x + 2, iy - 2, SIDEBAR_W - 4, 18, M3.pill(18), M3.SECONDARY_CONTAINER);
+            } else if (hover) {
+                M3.roundRect(g, x + 2, iy - 2, SIDEBAR_W - 4, 18, M3.pill(18),
+                        M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
             }
-            int color = active ? ACCENT.getRGB() : TEXT_DIM.getRGB();
-            int tw = font.width(p.label);
-            g.text(font, p.label, x + (SIDEBAR_W - tw) / 2, iy + 2, color);
+            int color = active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE_VARIANT;
+            String icon = navIcon(p);
+            int iconSize = 9;
+            float iconW = Icons.width(icon, iconSize);
+            float gap = 3f;
+            String label = p.label();
+            float groupW = iconW + gap + labelFont.width(label);
+            float startX = x + (SIDEBAR_W - groupW) / 2f;
+            Icons.drawCentered(g, icon, iconSize, startX + iconW / 2f, iy - 2 + 9f, color);
+            labelFont.drawString(g, label, startX + iconW + gap,
+                    iy - 2 + (18 - labelFont.lineHeight()) / 2f, color);
             addClick(x, iy - 2, SIDEBAR_W, 18, "nav:" + p.name());
         }
+    }
+
+    /** Material icon for each sidebar destination. */
+    private static String navIcon(Page p) {
+        return switch (p) {
+            case HOME -> Icons.HOME;
+            case SEARCH -> Icons.SEARCH;
+            case MINE -> Icons.PERSON;
+            case FM -> Icons.RADIO;
+            case LOGIN -> Icons.QR_CODE;
+            default -> Icons.MUSIC_NOTE;
+        };
     }
 
     private void drawPage(GuiGraphicsExtractor g, int x, int y) {
@@ -212,16 +297,20 @@ public class MusicPlayerScreen extends Screen {
         int py = y + HEADER_H;
         int pw = PANEL_W - SIDEBAR_W - 1;
         int ph = PANEL_H - HEADER_H - PLAYER_H;
+        // Page-switch slide: body content eases in from 14px right. Only the x
+        // handed to the page bodies moves – the scissor and zone clip stay put,
+        // so overflow keeps clipping and clicks stay honest.
+        int sx = px + (int) ((1f - AnimationUtils.easeOutCubic(slideT)) * 24f);
         // Nested clip keeps section internals honest even if outer scissor is adjusted later.
         g.enableScissor(px, py, px + pw, py + ph);
         try {
             switch (mp.page) {
-                case HOME -> drawHome(g, px, py, pw, ph);
-                case SEARCH -> drawSearch(g, px, py, pw, ph);
-                case MINE -> drawMine(g, px, py, pw, ph);
-                case FM -> drawFm(g, px, py, pw, ph);
-                case PLAYLIST -> drawPlaylistDetail(g, px, py, pw, ph);
-                case LOGIN -> drawLogin(g, px, py, pw, ph);
+                case HOME -> drawHome(g, sx, py, pw, ph);
+                case SEARCH -> drawSearch(g, sx, py, pw, ph);
+                case MINE -> drawMine(g, sx, py, pw, ph);
+                case FM -> drawFm(g, sx, py, pw, ph);
+                case PLAYLIST -> drawPlaylistDetail(g, sx, py, pw, ph);
+                case LOGIN -> drawLogin(g, sx, py, pw, ph);
             }
         } finally {
             g.disableScissor();
@@ -233,45 +322,17 @@ public class MusicPlayerScreen extends Screen {
     private void drawHome(GuiGraphicsExtractor g, int x, int y, int w, int h) {
         int contentTop = y + 4;
         int scroll = (int) mp.homeScroll;
-
-        int bannerH = 54;
-        int bannerY = contentTop - scroll;
-        if (bannerY + bannerH > y && bannerY < y + h) {
-            fill(g, x + PAD, Math.max(bannerY, y), w - PAD * 2,
-                    Math.min(bannerH, y + h - Math.max(bannerY, y)), BG_CARD);
-            if (!mp.banners.isEmpty()) {
-                NcmBanner b = mp.banners.get(Math.floorMod(mp.bannerIndex, mp.banners.size()));
-                Identifier img = mp.ensureImage(b.imageUrl, "banner_" + mp.bannerIndex);
-                if (img != null && bannerY >= y - 10) {
-                    blit(g, img, x + PAD, bannerY, w - PAD * 2, bannerH);
-                }
-                String title = MusicPlayer.ellipsize(
-                        b.title == null || b.title.isEmpty() ? b.typeTitle : b.title, 28);
-                g.text(font, title, x + PAD + 4, bannerY + bannerH - 12, TEXT.getRGB());
-                int dots = Math.min(mp.banners.size(), 8);
-                for (int i = 0; i < dots; i++) {
-                    int dx = x + w / 2 - dots * 4 + i * 8;
-                    fill(g, dx, bannerY + 4, 4, 4,
-                            i == Math.floorMod(mp.bannerIndex, mp.banners.size()) ? ACCENT : TEXT_MUTED);
-                }
-                addClick(x + PAD, bannerY, w - PAD * 2, bannerH, "banner:" + mp.bannerIndex);
-            } else {
-                g.text(font, mp.homeLoaded ? "暂无 Banner" : "加载首页中…",
-                        x + PAD + 8, bannerY + 20, TEXT_DIM.getRGB());
-            }
-        }
-
-        int cursor = contentTop + bannerH + 8 - scroll;
+        int cursor = contentTop - scroll;
 
         if (mp.user != null && mp.user.loggedIn) {
-            cursor = drawSectionTitle(g, x, y, w, h, cursor, "每日推荐");
+            cursor = drawSectionTitle(g, x, y, w, h, cursor, Lang.tr("music.daily"));
             cursor = drawSongRows(g, x, y, w, h, cursor, mp.dailySongs, "daily", 4);
         }
 
-        cursor = drawSectionTitle(g, x, y, w, h, cursor, "推荐歌单");
+        cursor = drawSectionTitle(g, x, y, w, h, cursor, Lang.tr("music.rec_playlists"));
         cursor = drawPlaylistCards(g, x, y, w, h, cursor, mp.homePlaylists, "homepl");
 
-        cursor = drawSectionTitle(g, x, y, w, h, cursor, "推荐新歌");
+        cursor = drawSectionTitle(g, x, y, w, h, cursor, Lang.tr("music.rec_songs"));
         cursor = drawSongRows(g, x, y, w, h, cursor, mp.newSongs, "newsong", 4);
 
         int contentH = cursor + scroll - contentTop + 12;
@@ -283,20 +344,21 @@ public class MusicPlayerScreen extends Screen {
             int barH = Math.max(12, (int) (viewH * ratio));
             int barY = y + 4 + (int) ((h - 8 - barH)
                     * (mp.homeScroll / Math.max(1f, contentH - viewH)));
-            fill(g, x + w - 3, barY, 2, barH, ACCENT_DIM);
+            fill(g, x + w - 3, barY, 2, barH, M3.ON_SURFACE_VARIANT);
         }
 
         if (!mp.homeLoaded && !mp.busy) {
-            g.text(font, "加载中…", x + w / 2 - 16, y + h / 2, TEXT_DIM.getRGB());
+            bodyFont.drawCenteredString(g, Lang.tr("music.loading"), x + w / 2f, y + h / 2f, M3.ON_SURFACE_VARIANT);
         }
     }
 
     private int drawSectionTitle(GuiGraphicsExtractor g, int x, int y, int w, int h,
                                  int cursor, String title) {
         if (cursor + 12 > y && cursor < y + h) {
-            g.text(font, title, x + PAD, cursor, TEXT.getRGB());
-            fill(g, x + PAD + font.width(title) + 4, cursor + 5,
-                    w - PAD * 2 - font.width(title) - 4, 1, DIVIDER);
+            titleFont.drawString(g, title, x + PAD, cursor, M3.ON_SURFACE);
+            int titleW = (int) titleFont.width(title);
+            M3.divider(g, x + PAD + titleW + 4, cursor + (int) (titleFont.lineHeight() / 2f),
+                    w - PAD * 2 - titleW - 4);
         }
         return cursor + 14;
     }
@@ -305,7 +367,7 @@ public class MusicPlayerScreen extends Screen {
                              int cursor, List<NcmSong> songs, String prefix, int max) {
         if (songs == null || songs.isEmpty()) {
             if (cursor + 12 > y && cursor < y + h) {
-                g.text(font, "暂无数据", x + PAD + 4, cursor, TEXT_MUTED.getRGB());
+                smallFont.drawString(g, Lang.tr("music.no_data"), x + PAD + 4, cursor, M3.ON_SURFACE_VARIANT);
             }
             return cursor + 16;
         }
@@ -317,15 +379,22 @@ public class MusicPlayerScreen extends Screen {
             // Only draw + fetch covers for rows that intersect the clipped viewport.
             if (rowY + rowH > y && rowY < y + h) {
                 boolean hover = isMouseOver(x + PAD, rowY, w - PAD * 2, rowH);
-                if (hover) fill(g, x + PAD, rowY - 1, w - PAD * 2, rowH, BG_CARD_HOVER);
-                g.text(font, String.valueOf(i + 1), x + PAD + 2, rowY + 2, TEXT_MUTED.getRGB());
+                if (hover) {
+                    M3.roundRect(g, x + PAD, rowY - 1, w - PAD * 2, rowH, M3.SHAPE_XS,
+                            M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
+                }
+                smallFont.drawString(g, String.valueOf(i + 1), x + PAD + 2,
+                        rowY + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
                 Identifier cover = mp.ensureImage(s.coverUrl, prefix + "_c_" + s.id);
                 if (cover != null) blit(g, cover, x + PAD + 14, rowY, 14, 14);
-                else fill(g, x + PAD + 14, rowY, 14, 14, BG_CARD);
-                g.text(font, MusicPlayer.ellipsize(s.name, 22), x + PAD + 32, rowY + 2, TEXT.getRGB());
-                String artist = MusicPlayer.ellipsize(s.artists, 16);
-                g.text(font, artist, x + w - PAD - font.width(artist) - 28, rowY + 2, TEXT_DIM.getRGB());
-                g.text(font, s.durationText(), x + w - PAD - 24, rowY + 2, TEXT_MUTED.getRGB());
+                else fill(g, x + PAD + 14, rowY, 14, 14, M3.SURFACE_CONTAINER_HIGH);
+                bodyFont.drawString(g, MusicPlayer.ellipsize(s.name, 16), x + PAD + 32,
+                        rowY + (rowH - bodyFont.lineHeight()) / 2f, M3.ON_SURFACE);
+                String artist = MusicPlayer.ellipsize(s.artists, 12);
+                smallFont.drawString(g, artist, x + w - PAD - smallFont.width(artist) - 28,
+                        rowY + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
+                smallFont.drawString(g, s.durationText(), x + w - PAD - 24,
+                        rowY + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
                 addClick(x + PAD, rowY - 1, w - PAD * 2, rowH, "play_song:" + prefix + ":" + i);
             }
             cursor += rowH + 1;
@@ -337,12 +406,12 @@ public class MusicPlayerScreen extends Screen {
                                   int cursor, List<NcmPlaylist> lists, String prefix) {
         if (lists == null || lists.isEmpty()) {
             if (cursor + 12 > y && cursor < y + h) {
-                g.text(font, "暂无歌单", x + PAD + 4, cursor, TEXT_MUTED.getRGB());
+                smallFont.drawString(g, Lang.tr("music.no_playlists"), x + PAD + 4, cursor, M3.ON_SURFACE_VARIANT);
             }
             return cursor + 16;
         }
-        int cardW = 70;
-        int cardH = 86;
+        int cardW = 62;
+        int cardH = 80; // cover (cardW-6) + name + count lines
         int gap = 6;
         int perRow = Math.max(1, (w - PAD * 2 + gap) / (cardW + gap));
         // One row of cards is enough for the home panel; avoids stampeding cover downloads.
@@ -356,12 +425,17 @@ public class MusicPlayerScreen extends Screen {
             if (cy + cardH > y && cy < y + h) {
                 NcmPlaylist pl = lists.get(i);
                 boolean hover = isMouseOver(cx, cy, cardW, cardH);
-                fill(g, cx, cy, cardW, cardH, hover ? BG_CARD_HOVER : BG_CARD);
+                int bg = hover
+                        ? M3.layered(M3.SURFACE_CONTAINER_HIGH, M3.ON_SURFACE, M3.STATE_HOVER)
+                        : M3.SURFACE_CONTAINER_HIGH;
+                M3.roundRect(g, cx, cy, cardW, cardH, M3.SHAPE_M, bg);
                 Identifier cover = mp.ensureImage(pl.coverUrl, prefix + "_pl_" + pl.id);
                 if (cover != null) blit(g, cover, cx + 3, cy + 3, cardW - 6, cardW - 6);
-                else fill(g, cx + 3, cy + 3, cardW - 6, cardW - 6, new Color(40, 55, 70));
-                g.text(font, MusicPlayer.ellipsize(pl.name, 8), cx + 3, cy + cardW - 2, TEXT.getRGB());
-                g.text(font, pl.shortPlayCount() + " 播", cx + 3, cy + cardW + 8, TEXT_MUTED.getRGB());
+                else fill(g, cx + 3, cy + 3, cardW - 6, cardW - 6, M3.SURFACE_CONTAINER_HIGHEST);
+                labelFont.drawString(g, MusicPlayer.ellipsize(pl.name, 7), cx + 3,
+                        cy + cardW - 3, M3.ON_SURFACE);
+                smallFont.drawString(g, Lang.tr("music.plays_short", pl.shortPlayCount()), cx + 3,
+                        cy + cardW + 8, M3.ON_SURFACE_VARIANT);
                 addClick(cx, cy, cardW, cardH, "open_pl:" + prefix + ":" + i);
             }
         }
@@ -374,33 +448,30 @@ public class MusicPlayerScreen extends Screen {
     private void drawSearch(GuiGraphicsExtractor g, int x, int y, int w, int h) {
         int boxY = y + 6;
         int boxH = 16;
-        fill(g, x + PAD, boxY, w - PAD * 2 - 36, boxH, BG_CARD);
-        if (mp.searchFocused) {
-            fill(g, x + PAD, boxY, w - PAD * 2 - 36, 1, ACCENT);
-            fill(g, x + PAD, boxY + boxH - 1, w - PAD * 2 - 36, 1, ACCENT);
-            fill(g, x + PAD, boxY, 1, boxH, ACCENT);
-            fill(g, x + PAD + w - PAD * 2 - 37, boxY, 1, boxH, ACCENT);
-        }
+        int boxW = w - PAD * 2 - 36;
+        // Outlined text field: OUTLINE at rest, PRIMARY outline when focused.
+        M3.outlinedRoundRect(g, x + PAD, boxY, boxW, boxH, M3.SHAPE_S,
+                M3.SURFACE_CONTAINER_LOW, mp.searchFocused ? M3.PRIMARY : M3.OUTLINE);
         String shown = mp.searchQuery.isEmpty() && !mp.searchFocused
-                ? "输入关键字搜索歌曲…"
+                ? Lang.tr("music.search_placeholder")
                 : mp.searchQuery + (mp.searchFocused && (System.currentTimeMillis() / 500) % 2 == 0 ? "_" : "");
-        g.text(font, MusicPlayer.ellipsize(shown, 34), x + PAD + 4, boxY + 4,
-                mp.searchQuery.isEmpty() && !mp.searchFocused ? TEXT_MUTED.getRGB() : TEXT.getRGB());
-        addClick(x + PAD, boxY, w - PAD * 2 - 36, boxH, "search_box");
+        bodyFont.drawString(g, MusicPlayer.ellipsize(shown, 28), x + PAD + 4,
+                boxY + (boxH - bodyFont.lineHeight()) / 2f,
+                mp.searchQuery.isEmpty() && !mp.searchFocused ? M3.ON_SURFACE_VARIANT : M3.ON_SURFACE);
+        addClick(x + PAD, boxY, boxW, boxH, "search_box");
 
         int btnW = 32;
-        fill(g, x + w - PAD - btnW, boxY, btnW, boxH, ACCENT);
-        g.text(font, "搜索", x + w - PAD - btnW + 4, boxY + 4, Color.WHITE.getRGB());
-        addClick(x + w - PAD - btnW, boxY, btnW, boxH, "search_go");
+        button(g, x + w - PAD - btnW, boxY, btnW, boxH, Lang.tr("music.search_go"), M3.PRIMARY, M3.ON_PRIMARY, "search_go");
 
         int listY = boxY + boxH + 6;
         if (mp.searchLoading) {
-            g.text(font, "搜索中…", x + PAD, listY, TEXT_DIM.getRGB());
+            smallFont.drawString(g, Lang.tr("music.searching"), x + PAD, listY, M3.ON_SURFACE_VARIANT);
             return;
         }
         if (mp.searchResults.isEmpty()) {
-            g.text(font, mp.searchQuery.isEmpty() ? "试试搜索你喜欢的歌" : "没有结果",
-                    x + PAD, listY, TEXT_MUTED.getRGB());
+            smallFont.drawString(g, mp.searchQuery.isEmpty()
+                            ? Lang.tr("music.search_hint") : Lang.tr("music.search_empty"),
+                    x + PAD, listY, M3.ON_SURFACE_VARIANT);
             return;
         }
         int rowH = 16;
@@ -409,13 +480,20 @@ public class MusicPlayerScreen extends Screen {
             NcmSong s = mp.searchResults.get(i);
             int ry = listY + i * rowH;
             boolean hover = isMouseOver(x + PAD, ry, w - PAD * 2, rowH);
-            if (hover) fill(g, x + PAD, ry, w - PAD * 2, rowH, BG_CARD_HOVER);
-            g.text(font, String.valueOf(i + 1), x + PAD + 2, ry + 3, TEXT_MUTED.getRGB());
+            if (hover) {
+                M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.SHAPE_XS,
+                        M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
+            }
+            smallFont.drawString(g, String.valueOf(i + 1), x + PAD + 2,
+                    ry + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
             Identifier cover = mp.ensureImage(s.coverUrl, "search_c_" + s.id);
             if (cover != null) blit(g, cover, x + PAD + 14, ry + 1, 12, 12);
-            g.text(font, MusicPlayer.ellipsize(s.name, 20), x + PAD + 30, ry + 3, TEXT.getRGB());
-            g.text(font, MusicPlayer.ellipsize(s.artists, 14), x + w / 2, ry + 3, TEXT_DIM.getRGB());
-            g.text(font, s.durationText(), x + w - PAD - 24, ry + 3, TEXT_MUTED.getRGB());
+            bodyFont.drawString(g, MusicPlayer.ellipsize(s.name, 14), x + PAD + 30,
+                    ry + (rowH - bodyFont.lineHeight()) / 2f, M3.ON_SURFACE);
+            smallFont.drawString(g, MusicPlayer.ellipsize(s.artists, 12), x + w / 2,
+                    ry + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
+            smallFont.drawString(g, s.durationText(), x + w - PAD - 24,
+                    ry + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
             addClick(x + PAD, ry, w - PAD * 2, rowH, "play_song:search:" + i);
         }
     }
@@ -424,39 +502,37 @@ public class MusicPlayerScreen extends Screen {
 
     private void drawMine(GuiGraphicsExtractor g, int x, int y, int w, int h) {
         if (mp.user == null || !mp.user.loggedIn) {
-            g.text(font, "登录后查看我的歌单", x + PAD + 8, y + 24, TEXT_DIM.getRGB());
-            fill(g, x + PAD + 8, y + 44, 72, 16, ACCENT);
-            g.text(font, "去扫码登录", x + PAD + 14, y + 48, Color.WHITE.getRGB());
-            addClick(x + PAD + 8, y + 44, 72, 16, "nav:LOGIN");
+            bodyFont.drawString(g, Lang.tr("music.login_for_mine"), x + PAD + 8, y + 24, M3.ON_SURFACE_VARIANT);
+            button(g, x + PAD + 8, y + 44, 72, 16, Lang.tr("music.go_login"), M3.PRIMARY, M3.ON_PRIMARY, "nav:LOGIN");
             return;
         }
 
-        fill(g, x + PAD, y + 6, w - PAD * 2, 36, BG_CARD);
+        M3.roundRect(g, x + PAD, y + 6, w - PAD * 2, 36, M3.SHAPE_M, M3.SURFACE_CONTAINER_HIGH);
         Identifier avatar = mp.ensureImage(mp.user.avatarUrl, "avatar_" + mp.user.userId, true, true);
         if (avatar != null) {
             RenderUtils.drawCircularTexture(g, avatar, x + PAD + 4, y + 10, 28);
         } else {
-            fill(g, x + PAD + 4, y + 10, 28, 28, new Color(40, 55, 70));
+            M3.roundRect(g, x + PAD + 4, y + 10, 28, 28, M3.pill(28), M3.SURFACE_CONTAINER_HIGHEST);
         }
-        g.text(font, mp.user.displayName(), x + PAD + 38, y + 12, TEXT.getRGB());
+        bodyFont.drawString(g, mp.user.displayName(), x + PAD + 38, y + 10, M3.ON_SURFACE);
         String sub = "Lv." + mp.user.level + (mp.user.vipType > 0 ? "  ·  VIP" : "")
                 + "  ·  UID " + mp.user.userId;
-        g.text(font, sub, x + PAD + 38, y + 24, TEXT_MUTED.getRGB());
+        smallFont.drawString(g, sub, x + PAD + 38, y + 23, M3.ON_SURFACE_VARIANT);
 
-        fill(g, x + w - PAD - 40, y + 14, 36, 14, new Color(60, 40, 40));
-        g.text(font, "退出", x + w - PAD - 32, y + 17, new Color(255, 160, 160).getRGB());
-        addClick(x + w - PAD - 40, y + 14, 36, 14, "logout");
+        // Destructive button: error container pair.
+        button(g, x + w - PAD - 40, y + 14, 36, 14, Lang.tr("music.logout"),
+                M3.ERROR_CONTAINER, M3.ON_ERROR_CONTAINER, "logout");
 
         int cursor = y + 50;
-        g.text(font, "我的歌单", x + PAD, cursor, TEXT.getRGB());
+        titleFont.drawString(g, Lang.tr("music.my_playlists"), x + PAD, cursor, M3.ON_SURFACE);
         cursor += 14;
 
         if (!mp.mineLoaded) {
-            g.text(font, "加载中…", x + PAD, cursor, TEXT_DIM.getRGB());
+            smallFont.drawString(g, Lang.tr("music.loading"), x + PAD, cursor, M3.ON_SURFACE_VARIANT);
             return;
         }
         if (mp.myPlaylists.isEmpty()) {
-            g.text(font, "暂无歌单", x + PAD, cursor, TEXT_MUTED.getRGB());
+            smallFont.drawString(g, Lang.tr("music.no_playlists"), x + PAD, cursor, M3.ON_SURFACE_VARIANT);
             return;
         }
 
@@ -466,13 +542,18 @@ public class MusicPlayerScreen extends Screen {
             NcmPlaylist pl = mp.myPlaylists.get(i);
             int ry = cursor + i * rowH;
             boolean hover = isMouseOver(x + PAD, ry, w - PAD * 2, rowH);
-            if (hover) fill(g, x + PAD, ry, w - PAD * 2, rowH, BG_CARD_HOVER);
+            if (hover) {
+                M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.SHAPE_XS,
+                        M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
+            }
             Identifier cover = mp.ensureImage(pl.coverUrl, "mine_pl_" + pl.id);
             if (cover != null) blit(g, cover, x + PAD + 2, ry + 1, 14, 14);
-            else fill(g, x + PAD + 2, ry + 1, 14, 14, BG_CARD);
-            g.text(font, MusicPlayer.ellipsize(pl.name, 22), x + PAD + 20, ry + 4, TEXT.getRGB());
-            String meta = pl.trackCount + " 首";
-            g.text(font, meta, x + w - PAD - font.width(meta) - 4, ry + 4, TEXT_MUTED.getRGB());
+            else fill(g, x + PAD + 2, ry + 1, 14, 14, M3.SURFACE_CONTAINER_HIGH);
+            bodyFont.drawString(g, MusicPlayer.ellipsize(pl.name, 18), x + PAD + 20,
+                    ry + (rowH - bodyFont.lineHeight()) / 2f, M3.ON_SURFACE);
+            String meta = Lang.tr("music.songs_count", pl.trackCount);
+            smallFont.drawString(g, meta, x + w - PAD - smallFont.width(meta) - 4,
+                    ry + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
             addClick(x + PAD, ry, w - PAD * 2, rowH, "open_pl:mine:" + i);
         }
     }
@@ -481,22 +562,19 @@ public class MusicPlayerScreen extends Screen {
 
     private void drawFm(GuiGraphicsExtractor g, int x, int y, int w, int h) {
         if (mp.user == null || !mp.user.loggedIn) {
-            g.text(font, "私人 FM 需要登录", x + PAD + 8, y + 30, TEXT_DIM.getRGB());
-            fill(g, x + PAD + 8, y + 50, 72, 16, ACCENT);
-            g.text(font, "去扫码登录", x + PAD + 14, y + 54, Color.WHITE.getRGB());
-            addClick(x + PAD + 8, y + 50, 72, 16, "nav:LOGIN");
+            bodyFont.drawString(g, Lang.tr("music.fm_needs_login"), x + PAD + 8, y + 30, M3.ON_SURFACE_VARIANT);
+            button(g, x + PAD + 8, y + 50, 72, 16, Lang.tr("music.go_login"), M3.PRIMARY, M3.ON_PRIMARY, "nav:LOGIN");
             return;
         }
 
-        g.text(font, "私人 FM", x + PAD, y + 8, TEXT.getRGB());
-        g.text(font, "根据你的口味推荐", x + PAD, y + 20, TEXT_MUTED.getRGB());
+        titleFont.drawString(g, Lang.tr("music.page.fm"), x + PAD, y + 6, M3.ON_SURFACE);
+        smallFont.drawString(g, Lang.tr("music.fm_desc"), x + PAD, y + 22, M3.ON_SURFACE_VARIANT);
 
-        fill(g, x + PAD, y + 36, 60, 16, ACCENT);
-        g.text(font, "刷新一批", x + PAD + 8, y + 40, Color.WHITE.getRGB());
-        addClick(x + PAD, y + 36, 60, 16, "fm_refresh");
+        button(g, x + PAD, y + 36, 60, 16, Lang.tr("music.fm_refresh"),
+                M3.SECONDARY_CONTAINER, M3.ON_SECONDARY_CONTAINER, "fm_refresh");
 
         if (mp.fmQueue.isEmpty()) {
-            g.text(font, "点击刷新获取歌曲", x + PAD, y + 64, TEXT_DIM.getRGB());
+            smallFont.drawString(g, Lang.tr("music.fm_hint"), x + PAD, y + 64, M3.ON_SURFACE_VARIANT);
             return;
         }
 
@@ -508,10 +586,16 @@ public class MusicPlayerScreen extends Screen {
             int ry = listY + i * rowH;
             boolean active = mp.currentSong != null && mp.currentSong.id == s.id;
             boolean hover = isMouseOver(x + PAD, ry, w - PAD * 2, rowH);
-            if (active) fill(g, x + PAD, ry, w - PAD * 2, rowH, MusicPlayer.ACCENT_SOFT);
-            else if (hover) fill(g, x + PAD, ry, w - PAD * 2, rowH, BG_CARD_HOVER);
-            g.text(font, MusicPlayer.ellipsize(s.titleLine(), 36), x + PAD + 4, ry + 3,
-                    active ? ACCENT.getRGB() : TEXT.getRGB());
+            if (active) {
+                M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.pill(rowH), M3.SECONDARY_CONTAINER);
+            } else if (hover) {
+                // State layer conforms to the component's shape (same pill as active).
+                M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.pill(rowH),
+                        M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
+            }
+            bodyFont.drawString(g, MusicPlayer.ellipsize(s.titleLine(), 28), x + PAD + 4,
+                    ry + (rowH - bodyFont.lineHeight()) / 2f,
+                    active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE);
             addClick(x + PAD, ry, w - PAD * 2, rowH, "play_song:fm:" + i);
         }
     }
@@ -519,12 +603,18 @@ public class MusicPlayerScreen extends Screen {
     /* ---- playlist detail ---- */
 
     private void drawPlaylistDetail(GuiGraphicsExtractor g, int x, int y, int w, int h) {
-        fill(g, x + PAD, y + 4, 28, 12, BG_CARD);
-        g.text(font, "< 返回", x + PAD + 2, y + 6, TEXT_DIM.getRGB());
+        // Text button: no container, primary label, hover state layer in primary.
+        if (isMouseOver(x + PAD, y + 4, 28, 12)) {
+            M3.roundRect(g, x + PAD, y + 4, 28, 12, M3.pill(12),
+                    M3.stateLayer(M3.PRIMARY, M3.STATE_HOVER));
+        }
+        Icons.draw(g, Icons.ARROW_BACK, 8, x + PAD + 2, y + 4 + (12 - 8) / 2f, M3.PRIMARY);
+        smallFont.drawString(g, Lang.tr("music.back"), x + PAD + 2 + Icons.width(Icons.ARROW_BACK, 8) + 2,
+                y + 4 + (12 - smallFont.lineHeight()) / 2f, M3.PRIMARY);
         addClick(x + PAD, y + 4, 28, 12, "pl_back");
 
-        String title = mp.currentPlaylist == null ? "歌单" : mp.currentPlaylist.name;
-        g.text(font, MusicPlayer.ellipsize(title, 24), x + PAD + 34, y + 6, TEXT.getRGB());
+        String title = mp.currentPlaylist == null ? Lang.tr("music.page.playlist") : mp.currentPlaylist.name;
+        titleFont.drawString(g, MusicPlayer.ellipsize(title, 18), x + PAD + 34, y + 4, M3.ON_SURFACE);
 
         if (mp.currentPlaylist != null) {
             Identifier cover = mp.ensureImage(mp.currentPlaylist.coverUrl, "pldetail_" + mp.currentPlaylist.id);
@@ -533,18 +623,16 @@ public class MusicPlayerScreen extends Screen {
 
         int listY = y + 44;
         if (mp.playlistTracks.isEmpty()) {
-            g.text(font, mp.busy ? "加载歌曲中…" : "空歌单", x + PAD, listY, TEXT_DIM.getRGB());
+            smallFont.drawString(g, mp.busy ? Lang.tr("music.playlist_loading") : Lang.tr("music.playlist_empty"),
+                    x + PAD, listY, M3.ON_SURFACE_VARIANT);
             return;
         }
 
-        fill(g, x + PAD, y + 22, 52, 14, ACCENT);
-        g.text(font, "播放全部", x + PAD + 4, y + 25, Color.WHITE.getRGB());
-        addClick(x + PAD, y + 22, 52, 14, "pl_play_all");
-
+        button(g, x + PAD, y + 22, 52, 14, Lang.tr("music.play_all"), M3.PRIMARY, M3.ON_PRIMARY, "pl_play_all");
         if (mp.playlistHasMore) {
-            fill(g, x + PAD + 58, y + 22, 52, 14, BG_CARD);
-            g.text(font, mp.busy ? "加载中" : "加载更多", x + PAD + 62, y + 25, TEXT.getRGB());
-            addClick(x + PAD + 58, y + 22, 52, 14, "pl_load_more");
+            button(g, x + PAD + 58, y + 22, 52, 14,
+                    mp.busy ? Lang.tr("music.loading_short") : Lang.tr("music.load_more"),
+                    M3.SECONDARY_CONTAINER, M3.ON_SECONDARY_CONTAINER, "pl_load_more");
         }
 
         int rowH = 14;
@@ -553,90 +641,106 @@ public class MusicPlayerScreen extends Screen {
         int contentH = mp.playlistTracks.size() * rowH;
         mp.listScrollTarget = MusicPlayer.clamp(mp.listScrollTarget, 0, Math.max(0, contentH - viewH));
 
-        // Only touch rows near the viewport (covers deferred until visible).
-        int first = Math.max(0, scroll / rowH - 1);
-        int last = Math.min(mp.playlistTracks.size() - 1, (scroll + viewH) / rowH + 1);
-        for (int i = first; i <= last; i++) {
-            int ry = listY + i * rowH - scroll;
-            if (ry + rowH < listY || ry > y + h) continue;
-            NcmSong s = mp.playlistTracks.get(i);
-            boolean active = mp.currentSong != null && mp.currentSong.id == s.id;
-            boolean hover = isMouseOver(x + PAD, ry, w - PAD * 2, rowH);
-            if (active) fill(g, x + PAD, ry, w - PAD * 2, rowH, MusicPlayer.ACCENT_SOFT);
-            else if (hover) fill(g, x + PAD, ry, w - PAD * 2, rowH, BG_CARD_HOVER);
-            g.text(font, String.format("%02d", i + 1), x + PAD + 2, ry + 2, TEXT_MUTED.getRGB());
-            g.text(font, MusicPlayer.ellipsize(s.name, 20), x + PAD + 22, ry + 2,
-                    active ? ACCENT.getRGB() : TEXT.getRGB());
-            g.text(font, MusicPlayer.ellipsize(s.artists, 12), x + w / 2 + 10, ry + 2, TEXT_DIM.getRGB());
-            g.text(font, s.durationText(), x + w - PAD - 22, ry + 2, TEXT_MUTED.getRGB());
-            addClick(x + PAD, ry, w - PAD * 2, rowH, "play_song:pl:" + i);
+        // Rows clip (pixels AND click zones) at listY so partially scrolled rows
+        // can't overdraw or steal clicks from the buttons above the list.
+        g.enableScissor(x, listY, x + w, y + h);
+        raiseZoneClipTop(listY);
+        try {
+            // Only touch rows near the viewport (covers deferred until visible).
+            int first = Math.max(0, scroll / rowH - 1);
+            int last = Math.min(mp.playlistTracks.size() - 1, (scroll + viewH) / rowH + 1);
+            for (int i = first; i <= last; i++) {
+                int ry = listY + i * rowH - scroll;
+                if (ry + rowH < listY || ry > y + h) continue;
+                NcmSong s = mp.playlistTracks.get(i);
+                boolean active = mp.currentSong != null && mp.currentSong.id == s.id;
+                boolean hover = isMouseOver(x + PAD, ry, w - PAD * 2, rowH);
+                if (active) {
+                    M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.pill(rowH), M3.SECONDARY_CONTAINER);
+                } else if (hover) {
+                    M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.pill(rowH),
+                            M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
+                }
+                // Tonal pairing: every label on the secondary-container pill
+                // uses its on-color, not just the song name.
+                int metaColor = active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE_VARIANT;
+                smallFont.drawString(g, String.format("%02d", i + 1), x + PAD + 2,
+                        ry + (rowH - smallFont.lineHeight()) / 2f, metaColor);
+                bodyFont.drawString(g, MusicPlayer.ellipsize(s.name, 14), x + PAD + 22,
+                        ry + (rowH - bodyFont.lineHeight()) / 2f,
+                        active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE);
+                smallFont.drawString(g, MusicPlayer.ellipsize(s.artists, 12), x + w / 2 + 10,
+                        ry + (rowH - smallFont.lineHeight()) / 2f, metaColor);
+                smallFont.drawString(g, s.durationText(), x + w - PAD - 22,
+                        ry + (rowH - smallFont.lineHeight()) / 2f, metaColor);
+                addClick(x + PAD, ry, w - PAD * 2, rowH, "play_song:pl:" + i);
+            }
+        } finally {
+            restoreZoneClipTop();
+            g.disableScissor();
         }
     }
 
     /* ---- qr login ---- */
 
     private void drawLogin(GuiGraphicsExtractor g, int x, int y, int w, int h) {
-        g.text(font, "扫码登录网易云", x + PAD, y + 6, TEXT.getRGB());
-        g.text(font, "打开网易云 App -> 左侧栏 -> 扫一扫", x + PAD, y + 18, TEXT_MUTED.getRGB());
+        titleFont.drawString(g, Lang.tr("music.qr_title"), x + PAD, y + 3, M3.ON_SURFACE);
+        smallFont.drawString(g, Lang.tr("music.qr_desc"), x + PAD, y + 14,
+                M3.ON_SURFACE_VARIANT);
 
-        int qrSize = 110;
+        int qrSize = 92;
         int qx = x + (w - qrSize) / 2;
-        int qy = y + 34;
+        int qy = y + 28;
 
-        fill(g, qx - 4, qy - 4, qrSize + 8, qrSize + 8, Color.WHITE);
+        // Functional white backing plate – QR codes need it, keep it white.
+        fill(g, qx - 4, qy - 4, qrSize + 8, qrSize + 8, 0xFFFFFFFF);
         if (mp.qrTexture != null && !mp.qrLoading) {
             blit(g, mp.qrTexture, qx, qy, qrSize, qrSize);
         } else {
-            fill(g, qx, qy, qrSize, qrSize, new Color(240, 240, 240));
-            String msg = mp.qrLoading ? "生成中…" : "无二维码";
-            g.text(font, msg, qx + qrSize / 2 - font.width(msg) / 2,
-                    qy + qrSize / 2 - 4, TEXT_MUTED.getRGB());
+            fill(g, qx, qy, qrSize, qrSize, 0xFFF0F0F0);
+            String msg = mp.qrLoading ? Lang.tr("music.qr_generating") : Lang.tr("music.qr_none");
+            bodyFont.drawCenteredString(g, msg, qx + qrSize / 2f,
+                    qy + qrSize / 2f - bodyFont.lineHeight() / 2f, M3.INVERSE_ON_SURFACE);
         }
 
         if (mp.qrCode == 802) {
-            fill(g, qx, qy, qrSize, qrSize, new Color(0, 0, 0, 140));
-            String t = "待确认";
-            g.text(font, t, qx + qrSize / 2 - font.width(t) / 2,
-                    qy + qrSize / 2 - 4, Color.WHITE.getRGB());
+            fill(g, qx, qy, qrSize, qrSize, M3.withAlpha(M3.SCRIM, 140));
+            bodyFont.drawCenteredString(g, Lang.tr("music.qr_waiting_confirm"), qx + qrSize / 2f,
+                    qy + qrSize / 2f - bodyFont.lineHeight() / 2f, M3.ON_SURFACE);
             if (mp.qrNicknameHint != null && !mp.qrNicknameHint.isEmpty()) {
                 String n = MusicPlayer.ellipsize(mp.qrNicknameHint, 12);
-                g.text(font, n, qx + qrSize / 2 - font.width(n) / 2,
-                        qy + qrSize / 2 + 8, new Color(200, 255, 200).getRGB());
+                smallFont.drawCenteredString(g, n, qx + qrSize / 2f,
+                        qy + qrSize / 2f + 8, M3.PRIMARY);
             }
         } else if (mp.qrCode == 800) {
-            fill(g, qx, qy, qrSize, qrSize, new Color(0, 0, 0, 160));
-            String t = "已过期";
-            g.text(font, t, qx + qrSize / 2 - font.width(t) / 2,
-                    qy + qrSize / 2 - 10, Color.WHITE.getRGB());
-            String t2 = "点击刷新";
-            g.text(font, t2, qx + qrSize / 2 - font.width(t2) / 2,
-                    qy + qrSize / 2 + 4, ACCENT.getRGB());
+            fill(g, qx, qy, qrSize, qrSize, M3.withAlpha(M3.SCRIM, 160));
+            bodyFont.drawCenteredString(g, Lang.tr("music.qr_expired"), qx + qrSize / 2f,
+                    qy + qrSize / 2f - 12, M3.ON_SURFACE);
+            smallFont.drawCenteredString(g, Lang.tr("music.qr_click_refresh"), qx + qrSize / 2f,
+                    qy + qrSize / 2f + 4, M3.PRIMARY);
         }
 
         addClick(qx - 4, qy - 4, qrSize + 8, qrSize + 8, "qr_refresh");
 
         int statusColor = switch (mp.qrCode) {
-            case 803 -> new Color(80, 200, 120).getRGB();
-            case 802 -> new Color(255, 200, 80).getRGB();
-            case 801 -> TEXT_DIM.getRGB();
-            case 800 -> ACCENT.getRGB();
-            default -> TEXT_MUTED.getRGB();
+            case 803 -> M3.PRIMARY;              // success
+            case 802 -> M3.ON_SURFACE_VARIANT;   // waiting for confirm
+            case 801 -> M3.ON_SURFACE_VARIANT;   // waiting for scan
+            case 800 -> M3.ERROR;                // expired
+            default -> M3.ON_SURFACE_VARIANT;
         };
-        String stShow = MusicPlayer.ellipsize(mp.qrStatusText == null ? "" : mp.qrStatusText, 34);
-        g.text(font, stShow, x + w / 2 - font.width(stShow) / 2, qy + qrSize + 12, statusColor);
+        String stShow = MusicPlayer.ellipsize(mp.qrStatusText == null ? "" : mp.qrStatusText, 30);
+        smallFont.drawCenteredString(g, stShow, x + w / 2f, qy + qrSize + 8, statusColor);
 
-        g.text(font, "状态: 800过期  801等待  802待确认  803成功",
-                x + PAD, qy + qrSize + 28, TEXT_MUTED.getRGB());
+        smallFont.drawString(g, Lang.tr("music.qr_legend"),
+                x + PAD, qy + qrSize + 18, M3.ON_SURFACE_VARIANT);
 
-        int by = y + h - 22;
-        fill(g, x + PAD, by, 52, 14, BG_CARD);
-        g.text(font, "刷新二维码", x + PAD + 2, by + 3, TEXT.getRGB());
-        addClick(x + PAD, by, 52, 14, "qr_refresh");
+        int by = y + h - 18;
+        button(g, x + PAD, by, 52, 14, Lang.tr("music.qr_refresh"),
+                M3.SECONDARY_CONTAINER, M3.ON_SECONDARY_CONTAINER, "qr_refresh");
 
         if (mp.user != null && mp.user.loggedIn) {
-            fill(g, x + PAD + 60, by, 52, 14, ACCENT);
-            g.text(font, "进入首页", x + PAD + 68, by + 3, Color.WHITE.getRGB());
-            addClick(x + PAD + 60, by, 52, 14, "nav:HOME");
+            button(g, x + PAD + 60, by, 52, 14, Lang.tr("music.qr_enter"), M3.PRIMARY, M3.ON_PRIMARY, "nav:HOME");
         }
     }
 
@@ -647,74 +751,95 @@ public class MusicPlayerScreen extends Screen {
         int py = y + PANEL_H - PLAYER_H;
 
         // Album cover stays square; only avatars use the circle mask.
-        int coverSize = 28;
-        int cx = px + 6;
+        int coverSize = 24;
+        int cx = px + 5;
         int cy = py + (PLAYER_H - coverSize) / 2;
         Identifier cover = mp.currentSong == null ? null
                 : mp.ensureImage(mp.currentSong.coverUrl, "now_cover_" + mp.currentSong.id, false, true);
         if (cover != null) {
             blit(g, cover, cx, cy, coverSize, coverSize);
         } else {
-            fill(g, cx, cy, coverSize, coverSize, BG_CARD);
+            fill(g, cx, cy, coverSize, coverSize, M3.SURFACE_CONTAINER_HIGH);
         }
 
-        int textX = cx + coverSize + 6;
+        int textX = cx + coverSize + 5;
+        int midX = px + PANEL_W / 2;
+        int barX = px + 100;
         if (mp.currentSong != null) {
-            g.text(font, MusicPlayer.ellipsize(mp.currentSong.name, 16), textX, py + 6, TEXT.getRGB());
+            // Pixel budget: the title must stop before the prev button (midX-40).
+            String name = trimToWidth(titleFont, mp.currentSong.name, midX - 40 - 4 - textX);
+            titleFont.drawString(g, name, textX, py + 4, M3.ON_SURFACE);
             String sub = mp.currentLyricLine();
             if (sub == null || sub.isEmpty()) sub = mp.currentSong.artists;
-            g.pose().pushMatrix();
-            g.pose().scale(0.8f, 0.8f);
-            g.text(font, MusicPlayer.ellipsize(sub, 18), (int)(textX / 0.8f), (int)((py + 18) / 0.8f), TEXT_DIM.getRGB());
-            g.pose().popMatrix();
+            // Pixel budget, not char count: the lyric must stop before the
+            // elapsed-time label that right-aligns to barX - 4.
+            float subMax = barX - 4 - smallFont.width("00:00") - 6 - textX;
+            sub = trimToWidth(smallFont, sub, subMax);
+            smallFont.drawString(g, sub, textX, py + 17, M3.ON_SURFACE_VARIANT);
         } else {
-            g.text(font, "未在播放", textX, py + 10, TEXT_MUTED.getRGB());
+            bodyFont.drawString(g, Lang.tr("music.not_playing"), textX,
+                    py + (PLAYER_H - bodyFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
         }
 
-        int midX = px + PANEL_W / 2;
-        int btnY = py + 6;
-        drawBtn(g, midX - 40, btnY, 14, 12, "<<", "prev");
-        drawBtn(g, midX - 12, btnY, 18, 12, mp.audio.isPlaying() ? "||" : ">", "toggle");
-        drawBtn(g, midX + 18, btnY, 14, 12, ">>", "next");
+        int btnY = py + 4;
+        drawBtn(g, midX - 40, btnY, 14, 12, Icons.SKIP_PREVIOUS, "prev");
+        drawBtn(g, midX - 12, btnY, 18, 12, mp.audio.isPlaying() ? Icons.PAUSE : Icons.PLAY_ARROW, "toggle");
+        drawBtn(g, midX + 18, btnY, 14, 12, Icons.SKIP_NEXT, "next");
 
-        int barX = px + 110;
-        int barW = PANEL_W - 200;
-        int barY = py + 28;
+        int barW = PANEL_W - 180;
+        int barY = py + 23;
         int barH = 4;
-        fill(g, barX, barY, barW, barH, PROGRESS_BG);
+        // Linear progress: primary indicator on surface-container-highest track.
+        fill(g, barX, barY, barW, barH, M3.SURFACE_CONTAINER_HIGHEST);
         float prog = mp.audio.progress();
         int filled = (int) (barW * prog);
-        if (filled > 0) fill(g, barX, barY, filled, barH, ACCENT);
-        fill(g, barX + Math.max(0, filled - 1), barY - 2, 4, barH + 4, Color.WHITE);
+        if (filled > 0) fill(g, barX, barY, filled, barH, M3.PRIMARY);
+        M3.roundRect(g, barX + Math.max(0, filled - 1), barY - 2, 4, barH + 4, 2, M3.PRIMARY);
         addClick(barX - 2, barY - 4, barW + 4, barH + 8, "seek");
 
         String tLeft = MusicPlayer.formatMs(mp.audio.positionMs());
         String tRight = mp.currentSong == null ? "0:00"
                 : MusicPlayer.formatMs(Math.max(mp.audio.getDurationMs(), mp.currentSong.durationMs));
-        g.text(font, tLeft, barX - font.width(tLeft) - 4, barY - 2, TEXT_MUTED.getRGB());
-        g.text(font, tRight, barX + barW + 4, barY - 2, TEXT_MUTED.getRGB());
+        smallFont.drawString(g, tLeft, barX - smallFont.width(tLeft) - 4, barY - 3,
+                M3.ON_SURFACE_VARIANT);
+        smallFont.drawString(g, tRight, barX + barW + 4, barY - 3, M3.ON_SURFACE_VARIANT);
 
-        int vx = px + PANEL_W - 70;
-        g.text(font, "VOL", vx - 18, py + 8, TEXT_MUTED.getRGB());
-        fill(g, vx, py + 12, 50, 3, PROGRESS_BG);
-        fill(g, vx, py + 12, (int) (50 * mp.volume), 3, TEXT_DIM);
-        addClick(vx - 2, py + 8, 54, 12, "volume");
+        int vx = px + PANEL_W - 60;
+        Icons.draw(g, Icons.VOLUME_UP, 8, vx - 16, py + 6, M3.ON_SURFACE_VARIANT);
+        fill(g, vx, py + 10, 40, 3, M3.SURFACE_CONTAINER_HIGHEST);
+        fill(g, vx, py + 10, (int) (40 * mp.volume), 3, M3.PRIMARY);
+        addClick(vx - 2, py + 6, 44, 12, "volume");
 
-        int mx = px + PANEL_W - 60;
-        g.text(font, mp.repeatOne ? "[单曲]" : (mp.shuffle ? "[随机]" : "[顺序]"),
-                mx, py + 22, TEXT_MUTED.getRGB());
-        addClick(mx, py + 20, 40, 12, "mode");
+        int mx = px + PANEL_W - 48;
+        String modeIcon = mp.repeatOne ? Icons.REPEAT_ONE : (mp.shuffle ? Icons.SHUFFLE : Icons.REPEAT);
+        Icons.draw(g, modeIcon, 9, mx, py + 19,
+                isMouseOver(mx, py + 18, 24, 12) ? M3.ON_SURFACE : M3.ON_SURFACE_VARIANT);
+        addClick(mx, py + 18, 24, 12, "mode");
 
         if (mp.audio.isLoading()) {
-            g.text(font, "缓冲…", midX - 12, py + 22, TEXT_DIM.getRGB());
+            smallFont.drawString(g, Lang.tr("music.buffering"), midX + 36, py + 6, M3.ON_SURFACE_VARIANT);
         }
     }
 
-    private void drawBtn(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, String id) {
+    /** Transport button: tonal pill (secondary container + on-secondary-container). */
+    private void drawBtn(GuiGraphicsExtractor g, int x, int y, int w, int h, String icon, String id) {
         boolean hover = isMouseOver(x, y, w, h);
-        fill(g, x, y, w, h, hover ? BG_CARD_HOVER : BG_CARD);
-        int tw = font.width(label);
-        g.text(font, label, x + (w - tw) / 2, y + 2, TEXT.getRGB());
+        int bg = hover
+                ? M3.layered(M3.SECONDARY_CONTAINER, M3.ON_SECONDARY_CONTAINER, M3.STATE_HOVER)
+                : M3.SECONDARY_CONTAINER;
+        M3.roundRect(g, x, y, w, h, M3.pill(h), bg);
+        Icons.drawCentered(g, icon, 9, x + w / 2f, y + h / 2f, M3.ON_SECONDARY_CONTAINER);
+        addClick(x, y, w, h, id);
+    }
+
+    /** Standard M3 button: pill container + label, with an 8% hover state layer. */
+    private void button(GuiGraphicsExtractor g, int x, int y, int w, int h, String label,
+                        int container, int onColor, String id) {
+        boolean hover = isMouseOver(x, y, w, h);
+        int bg = hover ? M3.layered(container, onColor, M3.STATE_HOVER) : container;
+        M3.roundRect(g, x, y, w, h, M3.pill(h), bg);
+        labelFont.drawCenteredString(g, label, x + w / 2f,
+                y + (h - labelFont.lineHeight()) / 2f, onColor);
         addClick(x, y, w, h, id);
     }
 
@@ -751,14 +876,14 @@ public class MusicPlayerScreen extends Screen {
             return true;
         }
         if ("seek".equals(hit.id)) {
-            int barX = panelX + 110;
-            int barW = PANEL_W - 200;
+            int barX = panelX + 100;
+            int barW = PANEL_W - 180;
             mp.seekByRatio((mx - barX) / (float) barW);
             return true;
         }
         if ("volume".equals(hit.id)) {
-            int vx = panelX + PANEL_W - 70;
-            mp.setVolumeByRatio((mx - vx) / 50f);
+            int vx = panelX + PANEL_W - 60;
+            mp.setVolumeByRatio((mx - vx) / 40f);
             return true;
         }
 
@@ -785,14 +910,14 @@ public class MusicPlayerScreen extends Screen {
         ClickZone hit = hitTest(mx, my);
         if (hit != null) {
             if ("seek".equals(hit.id)) {
-                int barX = panelX + 110;
-                int barW = PANEL_W - 200;
+                int barX = panelX + 100;
+                int barW = PANEL_W - 180;
                 mp.seekByRatio((mx - barX) / (float) barW);
                 return true;
             }
             if ("volume".equals(hit.id)) {
-                int vx = panelX + PANEL_W - 70;
-                mp.setVolumeByRatio((mx - vx) / 50f);
+                int vx = panelX + PANEL_W - 60;
+                mp.setVolumeByRatio((mx - vx) / 40f);
                 return true;
             }
         }
@@ -906,13 +1031,49 @@ public class MusicPlayerScreen extends Screen {
         return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
     }
 
+    /** Active click-zone clip; mirrors the scissor so hidden content can't be hit. */
+    private int zClipX0, zClipY0, zClipX1, zClipY1;
+    private boolean zClipOn;
+    private int zClipSavedY0;
+
+    private void pushZoneClip(int x0, int y0, int x1, int y1) {
+        zClipX0 = x0;
+        zClipY0 = y0;
+        zClipX1 = x1;
+        zClipY1 = y1;
+        zClipOn = true;
+    }
+
+    private void popZoneClip() {
+        zClipOn = false;
+    }
+
+    /** Narrows only the top edge (list areas below in-body buttons). */
+    private void raiseZoneClipTop(int y0) {
+        zClipSavedY0 = zClipY0;
+        zClipY0 = Math.max(zClipY0, y0);
+    }
+
+    private void restoreZoneClipTop() {
+        zClipY0 = zClipSavedY0;
+    }
+
     private void addClick(int x, int y, int w, int h, String id) {
+        if (zClipOn) {
+            int nx0 = Math.max(x, zClipX0);
+            int ny0 = Math.max(y, zClipY0);
+            int nx1 = Math.min(x + w, zClipX1);
+            int ny1 = Math.min(y + h, zClipY1);
+            if (nx1 <= nx0 || ny1 <= ny0) return;
+            clickZones.add(new ClickZone(nx0, ny0, nx1 - nx0, ny1 - ny0, id));
+            return;
+        }
         clickZones.add(new ClickZone(x, y, w, h, id));
     }
 
-    private void fill(GuiGraphicsExtractor g, int x, int y, int w, int h, Color c) {
+    private void fill(GuiGraphicsExtractor g, int x, int y, int w, int h, int argb) {
         if (w <= 0 || h <= 0) return;
-        g.fill(x, y, x + w, y + h, c.getRGB());
+        g.fill(x, y, x + w, y + h, argb);
     }
 
     private void blit(GuiGraphicsExtractor g, Identifier id, int x, int y, int w, int h) {
@@ -921,6 +1082,15 @@ public class MusicPlayerScreen extends Screen {
 
     private static int clamp(int v, int lo, int hi) {
         return Math.max(lo, Math.min(hi, v));
+    }
+
+    /** Trims with a … suffix until the string fits {@code maxW} GUI px. */
+    private static String trimToWidth(TTFFontRenderer font, String s, float maxW) {
+        if (s == null || s.isEmpty() || font.width(s) <= maxW) return s == null ? "" : s;
+        while (s.length() > 1 && font.width(s + "…") > maxW) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s + "…";
     }
 
     private static final class ClickZone {

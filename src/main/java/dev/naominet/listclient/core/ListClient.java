@@ -10,7 +10,6 @@ import dev.naominet.listclient.module.Module;
 import dev.naominet.listclient.ncmApi.NCMAPI;
 import dev.naominet.listclient.utils.WavPlayer;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.screens.ChatScreen;
 import org.msgpack.core.MessageBufferPacker;
 import org.msgpack.core.MessageUnpacker;
 
@@ -40,8 +39,13 @@ public class ListClient {
         if (e.getKeyCode() == -1) {
             return;
         }
+        // Module binds are gameplay keys: never fire while ANY screen is open,
+        // or typing in ClickGUI search / bind capture toggles modules mid-keystroke.
+        if (Minecraft.getInstance().gui.screen() != null) {
+            return;
+        }
         for (Module m : ModuleManager.instance.getModules())
-            if(e.getKeyCode() == m.getKeyCode() && !(Minecraft.getInstance().gui.screen() instanceof ChatScreen))
+            if(e.getKeyCode() == m.getKeyCode())
                 m.setEnable(!m.isEnable());
     }
 
