@@ -1,0 +1,1126 @@
+package dev.naominet.listclient.module.render;
+
+import com.mojang.blaze3d.platform.InputConstants;
+import dev.naominet.listclient.core.ListClient;
+import dev.naominet.listclient.module.Category;
+import dev.naominet.listclient.module.Module;
+import dev.naominet.listclient.value.Option;
+import dev.naominet.listclient.ncmApi.NCMAPI;
+import dev.naominet.listclient.ncmApi.NcmBanner;
+import dev.naominet.listclient.ncmApi.NcmLyricLine;
+import dev.naominet.listclient.ncmApi.NcmPlaylist;
+import dev.naominet.listclient.ncmApi.NcmSong;
+import dev.naominet.listclient.ncmApi.NcmUser;
+import dev.naominet.listclient.ui.MusicPlayerScreen;
+import dev.naominet.listclient.utils.MouseData;
+import dev.naominet.listclient.utils.NcmAudioPlayer;
+import dev.naominet.listclient.utils.Pair;
+import dev.naominet.listclient.utils.RenderUtils;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.resources.Identifier;
+
+import java.awt.Color;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+/**
+ * NetEase Cloud Music entry module.
+ * <p>
+ * Holds session / playback state and the draggable mini-widget bounds
+ * ({@link #setXYWH}). Enabling (default key M) only opens
+ * {@link MusicPlayerScreen}. The mini player HUD is drawn by
+ * {@link Interface}, not by this module's render hook.
+ * <p>
+ * Audio goes through the process-wide {@link NcmAudioPlayer#INSTANCE}
+ * so only one track can ever play.
+ */
+public class MusicPlayer extends Module {
+
+    public static MusicPlayer instance;
+
+    /** Material Light Blue 400 */
+
+    // ---- Debug toggle ----
+    public final Option debug = new Option("Debug", true);
+    public static final Color ACCENT = new Color(0x29, 0xB6, 0xF6);
+    public static final Color ACCENT_DARK = new Color(0x02, 0x88, 0xD1);
+    public static final Color ACCENT_DIM = new Color(0x29, 0xB6, 0xF6, 120);
+    public static final Color ACCENT_SOFT = new Color(0x29, 0xB6, 0xF6, 40);
+
+    public static final int WIDGET_W = 196;
+    public static final int WIDGET_H = 36;
+
+    public enum Page {
+        HOME("首页"),
+        SEARCH("搜索"),
+        MINE("我的"),
+        FM("私人FM"),
+        PLAYLIST("歌单"),
+        LOGIN("扫码登录");
+
+        public final String label;
+
+        Page(String label) {
+            this.label = label;
+        }
+    }
+
+    /* ---- shared audio / session ---- */
+    /** Always the process-wide singleton – never construct another player. */
+    public final NcmAudioPlayer audio = NcmAudioPlayer.INSTANCE;
+    public final Map<String, Identifier> imageCache = new HashMap<>();
+    public final Map<String, Boolean> imageLoading = new HashMap<>();
+    public final Map<String, Boolean> imageFailed = new HashMap<>();
+
+    public NcmUser user = NcmUser.empty();
+    public String statusText = "";
+    public String errorText = "";
+    public boolean busy;
+
+    public Page page = Page.HOME;
+    public Page returnPage = Page.HOME;
+
+    /* home */
+    public List<NcmBanner> banners = new CopyOnWriteArrayList<>();
+    public List<NcmPlaylist> homePlaylists = new CopyOnWriteArrayList<>();
+    public List<NcmSong> dailySongs = new CopyOnWriteArrayList<>();
+    public List<NcmSong> newSongs = new CopyOnWriteArrayList<>();
+    public int bannerIndex;
+    public long bannerLastSwitchMs;
+    public boolean homeLoaded;
+    public float homeScroll;
+    public float homeScrollTarget;
+
+    /* mine */
+    public List<NcmPlaylist> myPlaylists = new CopyOnWriteArrayList<>();
+    public boolean mineLoaded;
+
+    /* playlist detail */
+    public NcmPlaylist currentPlaylist;
+    public List<NcmSong> playlistTracks = new CopyOnWriteArrayList<>();
+    public float listScroll;
+    public float listScrollTarget;
+    /** How many tracks we've requested so far (offset for next page). */
+    public int playlistTrackOffset;
+    public boolean playlistHasMore;
+    public static final int PLAYLIST_PAGE_SIZE = 30;
+
+    /* search */
+    public String searchQuery = "";
+    public List<NcmSong> searchResults = new CopyOnWriteArrayList<>();
+    public boolean searchLoading;
+    public long lastSearchTypeMs;
+    public String pendingSearch = "";
+    public boolean searchFocused;
+
+    /* fm */
+    public List<NcmSong> fmQueue = new CopyOnWriteArrayList<>();
+    public int fmIndex;
+
+    /* player */
+    public NcmSong currentSong;
+    public final List<NcmSong> playQueue = new CopyOnWriteArrayList<>();
+    public int queueIndex = -1;
+    public List<NcmLyricLine> lyrics = new CopyOnWriteArrayList<>();
+    public boolean shuffle;
+    public boolean repeatOne;
+    public float volume = 0.85f;
+
+    /* qr login */
+    public Identifier qrTexture;
+    public String qrUniKey = "";
+    public String qrStatusText = "点击刷新二维码";
+    public int qrCode = -1;
+    public long lastQrPollMs;
+    public long lastQrRefreshMs;
+    public boolean qrPolling;
+    public boolean qrLoading;
+    public String qrNicknameHint = "";
+
+    private boolean sessionStarted;
+
+    public MusicPlayer() {
+        super("MusicPlayer", Category.Render);
+        instance = this;
+        addValues(debug);
+        setKeyCode(InputConstants.KEY_M);
+        // Default mini-widget anchor (Interface hosts the actual drawing).
+        setXYWH(4, 120, WIDGET_W, WIDGET_H);
+        audio.setVolume(volume);
+        // Re-bind end callback every construction; singleton audio outlives modules.
+        audio.setOnEnded(() -> {
+            if (mc != null) mc.execute(this::onTrackEnded);
+        });
+    }
+
+    public NCMAPI api() {
+        return ListClient.instance.ncmapi;
+    }
+
+    /* ================================================================== */
+    /*  module lifecycle – entry to the Screen only                       */
+    /* ================================================================== */
+
+    @Override
+    public void onEnable() {
+        ensureSession();
+        openScreen();
+        setSuffix("Screen");
+        // Entry-only: release the enable latch on the next client tick so the
+        // module list doesn't treat MusicPlayer as a permanent HUD owner.
+        // Audio + widget live on Interface / the audio singleton.
+        mc.execute(() -> {
+            if (isEnable()) {
+                setEnable(false);
+            }
+        });
+    }
+
+    @Override
+    public void onDisable() {
+        searchFocused = false;
+        // Do NOT close the screen or stop audio – widget/Interface owns those.
+        setSuffix(null);
+    }
+
+    public void openScreen() {
+        if (mc == null) return;
+        Screen current = mc.gui.screen();
+        if (current instanceof MusicPlayerScreen) {
+            return;
+        }
+        ensureSession();
+        if (page == Page.LOGIN && !api().hasCookie()) {
+            beginQrLogin(qrTexture == null);
+        }
+        mc.gui.setScreen(new MusicPlayerScreen(this));
+    }
+
+    public void closeScreenIfOpen() {
+        if (mc == null) return;
+        if (mc.gui.screen() instanceof MusicPlayerScreen) {
+            mc.gui.setScreen(null);
+        }
+    }
+
+    public void ensureSession() {
+        if (sessionStarted) {
+            return;
+        }
+        sessionStarted = true;
+        statusText = "就绪";
+        if (api().hasCookie()) {
+            refreshUserAndHome();
+        } else {
+            page = Page.LOGIN;
+        }
+    }
+
+    public boolean isScreenOpen() {
+        return mc != null && mc.gui.screen() instanceof MusicPlayerScreen;
+    }
+
+    /**
+     * Mini player widget – called by {@link Interface}. Honours {@link #getX()}/{@link #getY()}
+     * so the control is draggable via {@link #mouseClick}/{@link #doDrag}.
+     */
+    public void renderWidget(GuiGraphicsExtractor g) {
+        ensureSession();
+        tickQrPoll();
+        tickBanner();
+        tickSearchDebounce();
+
+        int w = WIDGET_W;
+        int h = WIDGET_H;
+        setXYWH(getX(), getY(), w, h);
+        int x = (int) getX();
+        int y = (int) getY();
+
+        RenderUtils.drawShadow(g, x, y, w, h);
+        g.fill(x, y, x + w, y + h, new Color(18, 24, 32, 210).getRGB());
+        // accent strip
+        g.fill(x, y, x + 2, y + h, ACCENT.getRGB());
+
+        // cover = square album art; fall back to circular user avatar only when idle
+        int artSize = 28;
+        int ax = x + 6;
+        int ay = y + (h - artSize) / 2;
+        Identifier art = null;
+        if (currentSong != null) {
+            art = ensureImage(currentSong.coverUrl, "now_cover_" + currentSong.id, false, true);
+            if (art != null) {
+                RenderUtils.drawTexture(g, art, ax, ay, artSize, artSize);
+            }
+        }
+        if (art == null && user != null && user.loggedIn) {
+            art = ensureImage(user.avatarUrl, "avatar_" + user.userId, true, true);
+            if (art != null) {
+                RenderUtils.drawCircularTexture(g, art, ax, ay, artSize);
+            }
+        }
+        if (art == null) {
+            g.fill(ax, ay, ax + artSize, ay + artSize, new Color(40, 55, 70).getRGB());
+        }
+
+        int textX = ax + artSize + 6;
+        if (currentSong != null) {
+            g.text(mc.font, ellipsize(currentSong.name, 14), textX, y + 5, 0xFFE8F5FC);
+            String sub = currentLyricLine();
+            if (sub == null || sub.isEmpty()) {
+                sub = currentSong.artists == null ? "" : currentSong.artists;
+            }
+            g.pose().pushMatrix();
+            g.pose().scale(0.8f, 0.8f);
+            g.text(mc.font, ellipsize(sub, 16), (int)(textX / 0.8f), (int)((y + 16) / 0.8f), 0xFF90A4AE);
+            g.pose().popMatrix();
+            setSuffix(ellipsize(currentSong.name, 12));
+        } else if (user != null && user.loggedIn) {
+            g.text(mc.font, ellipsize(user.displayName(), 14), textX, y + 5, 0xFFE8F5FC);
+            g.text(mc.font, "点击打开网易云", textX, y + 16, 0xFF90A4AE);
+            setSuffix(user.displayName());
+        } else {
+            g.text(mc.font, "MusicPlayer", textX, y + 5, 0xFFE8F5FC);
+            g.text(mc.font, "未登录 · 点击打开", textX, y + 16, 0xFF90A4AE);
+            setSuffix("Idle");
+        }
+
+        // transport hint buttons (visual only; click handled in mouseClick)
+        int bx = x + w - 52;
+        int by = y + 8;
+        drawMiniBtn(g, bx, by, audio.isPlaying() ? "||" : ">", audio.isPlaying());
+        drawMiniBtn(g, bx + 18, by, ">>", false);
+
+        // progress
+        float prog = currentSong == null ? 0f : audio.progress();
+        int barX = textX;
+        int barW = w - (textX - x) - 58;
+        int barY = y + h - 5;
+        g.fill(barX, barY, barX + barW, barY + 2, new Color(50, 70, 85, 200).getRGB());
+        if (prog > 0) {
+            g.fill(barX, barY, barX + Math.max(1, (int) (barW * prog)), barY + 2, ACCENT.getRGB());
+        }
+    }
+
+    private void drawMiniBtn(GuiGraphicsExtractor g, int x, int y, String label, boolean active) {
+        g.fill(x, y, x + 16, y + 12, active ? ACCENT_SOFT.getRGB() : new Color(30, 40, 50, 200).getRGB());
+        int tw = mc.font.width(label);
+        g.text(mc.font, label, x + (16 - tw) / 2, y + 2, active ? ACCENT.getRGB() : 0xFFB0BEC5);
+    }
+
+    /* widget interaction – independent of module enable flag (Interface hosts it) */
+    private boolean widgetDragging;
+    private float widgetOffX, widgetOffY;
+    private int pressX, pressY;
+    private boolean pressOpenedButtons;
+
+    /** Drag + click handling for the Interface-hosted widget. */
+    @Override
+    public void mouseClick(int mouseX, int mouseY, int button) {
+        if (!isHovered(getX(), getY(), getX() + getWidth(), getY() + getHeight(), mouseX, mouseY)) {
+            return;
+        }
+        if (button == 0) {
+            int x = (int) getX();
+            int y = (int) getY();
+            int w = (int) getWidth();
+            int bx = x + w - 52;
+            int by = y + 8;
+            pressOpenedButtons = false;
+            if (isHovered(bx, by, bx + 16, by + 12, mouseX, mouseY)) {
+                audio.toggle();
+                pressOpenedButtons = true;
+                return;
+            }
+            if (isHovered(bx + 18, by, bx + 34, by + 12, mouseX, mouseY)) {
+                playRelative(1);
+                pressOpenedButtons = true;
+                return;
+            }
+            widgetDragging = true;
+            widgetOffX = (float) (mouseX - getX());
+            widgetOffY = (float) (mouseY - getY());
+            pressX = mouseX;
+            pressY = mouseY;
+        } else if (button == 1) {
+            openScreen();
+        }
+    }
+
+    @Override
+    public void doDrag(int mouseX, int mouseY) {
+        if (!widgetDragging) {
+            return;
+        }
+        if (MouseData.mouseAction == 0) {
+            widgetDragging = false;
+            // click without meaningful drag → open full player
+            if (!pressOpenedButtons
+                    && Math.abs(mouseX - pressX) < 4
+                    && Math.abs(mouseY - pressY) < 4) {
+                openScreen();
+            }
+            return;
+        }
+        setXYWH(mouseX - widgetOffX, mouseY - widgetOffY, WIDGET_W, WIDGET_H);
+    }
+
+    /* ================================================================== */
+    /*  navigation / actions (used by screen)                             */
+    /* ================================================================== */
+
+    public void switchTo(Page target) {
+        if (target == Page.LOGIN) {
+            page = Page.LOGIN;
+            beginQrLogin(qrTexture == null);
+            searchFocused = false;
+            return;
+        }
+        if (target == Page.MINE) {
+            page = Page.MINE;
+            if (user != null && user.loggedIn && !mineLoaded) {
+                loadMine();
+            }
+            searchFocused = false;
+            return;
+        }
+        if (target == Page.HOME) {
+            page = Page.HOME;
+            if (!homeLoaded) loadHome();
+            searchFocused = false;
+            return;
+        }
+        if (target == Page.FM) {
+            page = Page.FM;
+            if (fmQueue.isEmpty() && user != null && user.loggedIn) loadFm();
+            searchFocused = false;
+            return;
+        }
+        if (target == Page.SEARCH) {
+            page = Page.SEARCH;
+            searchFocused = true;
+            return;
+        }
+        page = target;
+        searchFocused = false;
+    }
+
+    public void cycleMode() {
+        if (!shuffle && !repeatOne) {
+            shuffle = true;
+        } else if (shuffle) {
+            shuffle = false;
+            repeatOne = true;
+        } else {
+            repeatOne = false;
+        }
+        statusText = repeatOne ? "单曲循环" : (shuffle ? "随机播放" : "顺序播放");
+    }
+
+    public void dispatchAction(String id, int mouseX, int panelX) {
+        if (id == null) return;
+        errorText = "";
+
+        if (id.startsWith("nav:")) {
+            switchTo(Page.valueOf(id.substring(4)));
+            return;
+        }
+        switch (id) {
+            case "header_user" -> switchTo(user != null && user.loggedIn ? Page.MINE : Page.LOGIN);
+            case "qr_refresh" -> beginQrLogin(true);
+            case "logout" -> doLogout();
+            case "toggle" -> audio.toggle();
+            case "prev" -> playRelative(-1);
+            case "next" -> playRelative(1);
+            case "mode" -> cycleMode();
+            case "seek" -> {
+                // panel-relative: bar starts at panelX + 110, width PANEL_W-200 (screen passes absolute)
+                // Screen computes ratio itself for seek/volume when needed; keep simple absolute math here.
+            }
+            case "search_box" -> searchFocused = true;
+            case "search_go" -> {
+                searchFocused = false;
+                runSearch(searchQuery);
+            }
+            case "fm_refresh" -> loadFm();
+            case "pl_back" -> switchTo(returnPage == Page.PLAYLIST ? Page.HOME : returnPage);
+            case "pl_play_all" -> {
+                if (!playlistTracks.isEmpty()) {
+                    playQueue.clear();
+                    playQueue.addAll(playlistTracks);
+                    queueIndex = 0;
+                    playIndex(0);
+                }
+            }
+            case "pl_load_more" -> loadMorePlaylistTracks();
+            case "home_scroll_up" -> homeScrollTarget = Math.max(0, homeScrollTarget - 40);
+            case "home_scroll_down" -> homeScrollTarget += 40;
+            case "list_scroll_up" -> listScrollTarget = Math.max(0, listScrollTarget - 40);
+            case "list_scroll_down" -> listScrollTarget += 40;
+            default -> {
+                if (id.startsWith("play_song:")) {
+                    handlePlaySongClick(id.substring("play_song:".length()));
+                } else if (id.startsWith("open_pl:")) {
+                    handleOpenPlaylist(id.substring("open_pl:".length()));
+                } else if (id.startsWith("banner:")) {
+                    handleBannerClick();
+                }
+            }
+        }
+    }
+
+    public void seekByRatio(float ratio) {
+        audio.seekRatio(ratio);
+    }
+
+    public void setVolumeByRatio(float ratio) {
+        volume = clamp(ratio, 0f, 1f);
+        audio.setVolume(volume);
+    }
+
+    private void handlePlaySongClick(String rest) {
+        int colon = rest.lastIndexOf(':');
+        if (colon < 0) return;
+        String prefix = rest.substring(0, colon);
+        int index;
+        try {
+            index = Integer.parseInt(rest.substring(colon + 1));
+        } catch (NumberFormatException e) {
+            return;
+        }
+        List<NcmSong> source = switch (prefix) {
+            case "daily" -> dailySongs;
+            case "newsong" -> newSongs;
+            case "search" -> searchResults;
+            case "fm" -> fmQueue;
+            case "pl" -> playlistTracks;
+            default -> null;
+        };
+        if (source == null || index < 0 || index >= source.size()) return;
+
+        playQueue.clear();
+        playQueue.addAll(source);
+        queueIndex = index;
+        if ("fm".equals(prefix)) fmIndex = index;
+        playIndex(index);
+    }
+
+    private void handleOpenPlaylist(String rest) {
+        int colon = rest.lastIndexOf(':');
+        if (colon < 0) return;
+        String prefix = rest.substring(0, colon);
+        int index;
+        try {
+            index = Integer.parseInt(rest.substring(colon + 1));
+        } catch (NumberFormatException e) {
+            return;
+        }
+        List<NcmPlaylist> source = switch (prefix) {
+            case "homepl" -> homePlaylists;
+            case "mine" -> myPlaylists;
+            default -> null;
+        };
+        if (source == null || index < 0 || index >= source.size()) return;
+        openPlaylist(source.get(index));
+    }
+
+    private void handleBannerClick() {
+        if (banners.isEmpty()) return;
+        NcmBanner b = banners.get(Math.floorMod(bannerIndex, banners.size()));
+        if (b.targetId > 0 && (b.targetType == 1 || b.targetType == 0)) {
+            NcmSong song = new NcmSong();
+            song.id = b.targetId;
+            song.name = b.title == null || b.title.isEmpty() ? "Banner 歌曲" : b.title;
+            playQueue.clear();
+            playQueue.add(song);
+            queueIndex = 0;
+            playIndex(0);
+        } else if (b.targetId > 0 && b.targetType == 1000) {
+            NcmPlaylist pl = new NcmPlaylist();
+            pl.id = b.targetId;
+            pl.name = b.title;
+            pl.coverUrl = b.imageUrl;
+            openPlaylist(pl);
+        } else {
+            statusText = "Banner: " + (b.typeTitle == null ? "" : b.typeTitle);
+        }
+    }
+
+    /* ================================================================== */
+    /*  data loading                                                      */
+    /* ================================================================== */
+
+    public void refreshUserAndHome() {
+        busy = true;
+        statusText = "校验登录…";
+        api().async(() -> {
+            NcmUser u = api().fetchLoginStatus();
+            if (u.loggedIn && u.userId > 0) {
+                try {
+                    NcmUser detail = api().fetchUserDetail(u.userId);
+                    if (detail.loggedIn) {
+                        u.level = detail.level;
+                        if (u.avatarUrl == null || u.avatarUrl.isEmpty()) u.avatarUrl = detail.avatarUrl;
+                        if (u.signature == null || u.signature.isEmpty()) u.signature = detail.signature;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            return u;
+        }, u -> {
+            this.user = u;
+            busy = false;
+            if (u.loggedIn) {
+                statusText = "你好, " + u.displayName();
+                qrPolling = false;
+                if (page == Page.LOGIN) {
+                    page = Page.HOME;
+                }
+                loadHome();
+                loadMine();
+            } else {
+                statusText = "登录已失效";
+                api().clearCookie();
+                page = Page.LOGIN;
+                beginQrLogin(false);
+            }
+        }, ex -> {
+            busy = false;
+            errorText = "校验失败: " + ex.getMessage();
+            page = Page.LOGIN;
+            beginQrLogin(false);
+        });
+    }
+
+    public void loadHome() {
+        busy = true;
+        statusText = "加载首页…";
+        api().async(api()::getHomePage, data -> {
+            banners = new CopyOnWriteArrayList<>(data.banners);
+            // Already trimmed server-side; don't merge extra playlist sources on first paint.
+            homePlaylists = new CopyOnWriteArrayList<>(data.personalizedPlaylists);
+            dailySongs = new CopyOnWriteArrayList<>(data.dailySongs);
+            newSongs = new CopyOnWriteArrayList<>(data.newSongs);
+            homeLoaded = true;
+            busy = false;
+            bannerIndex = 0;
+            bannerLastSwitchMs = System.currentTimeMillis();
+            statusText = "首页已更新";
+        }, ex -> {
+            busy = false;
+            homeLoaded = true;
+            errorText = "首页加载失败: " + ex.getMessage();
+        });
+    }
+
+    public void loadMine() {
+        if (user == null || !user.loggedIn) return;
+        // Keep the first page small – covers are only fetched for visible rows.
+        api().async(() -> api().getUserPlaylists(user.userId, 12), list -> {
+            myPlaylists = new CopyOnWriteArrayList<>(list);
+            mineLoaded = true;
+        }, ex -> errorText = "歌单加载失败: " + ex.getMessage());
+    }
+
+    public void loadFm() {
+        if (user == null || !user.loggedIn) {
+            errorText = "私人 FM 需要登录";
+            return;
+        }
+        statusText = "拉取私人 FM…";
+        api().async(api()::getPersonalFm, list -> {
+            fmQueue = new CopyOnWriteArrayList<>(list);
+            fmIndex = 0;
+            statusText = "FM " + list.size() + " 首";
+            if (!list.isEmpty() && (currentSong == null || !audio.isPlaying())) {
+                playQueue.clear();
+                playQueue.addAll(list);
+                queueIndex = 0;
+                playIndex(0);
+            }
+        }, ex -> errorText = "FM 失败: " + ex.getMessage());
+    }
+
+    public void openPlaylist(NcmPlaylist pl) {
+        currentPlaylist = pl;
+        playlistTracks = new CopyOnWriteArrayList<>();
+        playlistTrackOffset = 0;
+        playlistHasMore = true;
+        returnPage = page == Page.PLAYLIST ? Page.HOME : page;
+        page = Page.PLAYLIST;
+        listScroll = listScrollTarget = 0;
+        loadMorePlaylistTracks();
+    }
+
+    public void loadMorePlaylistTracks() {
+        if (currentPlaylist == null || busy || !playlistHasMore) return;
+        busy = true;
+        statusText = playlistTrackOffset == 0 ? "加载歌单…" : "加载更多…";
+        final long pid = currentPlaylist.id;
+        final int offset = playlistTrackOffset;
+        api().async(() -> api().getPlaylistTracks(pid, PLAYLIST_PAGE_SIZE, offset), tracks -> {
+            if (currentPlaylist == null || currentPlaylist.id != pid) {
+                busy = false;
+                return;
+            }
+            if (offset == 0) {
+                playlistTracks = new CopyOnWriteArrayList<>(tracks);
+            } else {
+                playlistTracks.addAll(tracks);
+            }
+            playlistTrackOffset = offset + tracks.size();
+            // Short page ⇒ no more.
+            playlistHasMore = tracks.size() >= PLAYLIST_PAGE_SIZE;
+            busy = false;
+            statusText = currentPlaylist.name + " · " + playlistTracks.size()
+                    + (playlistHasMore ? "+ 首" : " 首");
+        }, ex -> {
+            busy = false;
+            errorText = "歌单失败: " + ex.getMessage();
+        });
+    }
+
+    public void runSearch(String q) {
+        if (q == null || q.trim().isEmpty()) {
+            searchResults = new CopyOnWriteArrayList<>();
+            return;
+        }
+        searchLoading = true;
+        statusText = "搜索: " + q;
+        api().async(() -> api().searchSongs(q.trim(), 15), list -> {
+            searchResults = new CopyOnWriteArrayList<>(list);
+            searchLoading = false;
+            statusText = "找到 " + list.size() + " 首";
+        }, ex -> {
+            searchLoading = false;
+            errorText = "搜索失败: " + ex.getMessage();
+        });
+    }
+
+    public void doLogout() {
+        statusText = "退出中…";
+        api().async(() -> {
+            api().logout();
+            return null;
+        }, ignored -> {
+            user = NcmUser.empty();
+            mineLoaded = false;
+            myPlaylists = new CopyOnWriteArrayList<>();
+            dailySongs = new CopyOnWriteArrayList<>();
+            homeLoaded = false;
+            statusText = "已退出登录";
+            page = Page.LOGIN;
+            beginQrLogin(true);
+        }, ex -> {
+            api().clearCookie();
+            user = NcmUser.empty();
+            page = Page.LOGIN;
+            beginQrLogin(true);
+        });
+    }
+
+    /* ================================================================== */
+    /*  QR login                                                          */
+    /* ================================================================== */
+
+    public void beginQrLogin(boolean force) {
+        if (qrLoading) return;
+        long now = System.currentTimeMillis();
+        if (!force && qrTexture != null && now - lastQrRefreshMs < 3_000) {
+            qrPolling = true;
+            return;
+        }
+        qrLoading = true;
+        qrPolling = false;
+        qrCode = -1;
+        qrNicknameHint = "";
+        qrStatusText = "正在获取二维码…";
+        statusText = "获取二维码";
+
+        api().async(() -> api().getLoginQrCode(), pair -> {
+            qrTexture = pair.getFirst();
+            qrUniKey = pair.getSecond();
+            qrLoading = false;
+            qrPolling = true;
+            lastQrRefreshMs = System.currentTimeMillis();
+            lastQrPollMs = 0;
+            qrCode = 801;
+            qrStatusText = "等待扫码…";
+            statusText = "请使用网易云 App 扫码";
+        }, ex -> {
+            qrLoading = false;
+            qrPolling = false;
+            qrStatusText = "获取失败: " + ex.getMessage();
+            errorText = qrStatusText;
+        });
+    }
+
+    public void tickQrPoll() {
+        if (!qrPolling) return;
+        if (page != Page.LOGIN) return;
+        if (qrUniKey == null || qrUniKey.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastQrPollMs < 1500) return;
+        lastQrPollMs = now;
+
+        final String key = qrUniKey;
+        api().async(() -> api().qrCodeStateCheck(key), pair -> {
+            if (!key.equals(qrUniKey)) return;
+            int code = pair.getFirst();
+            String msg = pair.getSecond() == null ? "" : pair.getSecond();
+            qrCode = code;
+            switch (code) {
+                case 800 -> {
+                    qrStatusText = "二维码已过期，点击刷新";
+                    qrPolling = false;
+                }
+                case 801 -> qrStatusText = "等待扫码…";
+                case 802 -> {
+                    qrStatusText = msg.isEmpty() ? "已扫码，请在手机上确认" : msg;
+                    qrNicknameHint = msg;
+                }
+                case 803 -> {
+                    qrStatusText = "登录成功！";
+                    qrPolling = false;
+                    statusText = "登录成功，加载用户…";
+                    onQrLoginSuccess();
+                }
+                default -> qrStatusText = "状态 " + code + (msg.isEmpty() ? "" : (" · " + msg));
+            }
+        }, ex -> qrStatusText = "轮询异常: " + ex.getMessage());
+    }
+
+    private void onQrLoginSuccess() {
+        api().async(() -> {
+            NcmUser u = api().fetchLoginStatus();
+            if (!u.loggedIn) {
+                u = api().fetchAccount();
+            }
+            if (u.loggedIn && u.userId > 0) {
+                try {
+                    NcmUser detail = api().fetchUserDetail(u.userId);
+                    if (detail.loggedIn) {
+                        u.level = detail.level;
+                        if (u.avatarUrl == null || u.avatarUrl.isEmpty()) u.avatarUrl = detail.avatarUrl;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            return u;
+        }, u -> {
+            this.user = u;
+            if (u.loggedIn) {
+                statusText = "欢迎, " + u.displayName();
+                page = Page.HOME;
+                homeLoaded = false;
+                mineLoaded = false;
+                loadHome();
+                loadMine();
+            } else {
+                errorText = "登录成功但资料拉取失败";
+            }
+        }, ex -> errorText = "登录后资料失败: " + ex.getMessage());
+    }
+
+    /* ================================================================== */
+    /*  playback                                                          */
+    /* ================================================================== */
+
+    public void playIndex(int index) {
+        if (playQueue.isEmpty()) return;
+        if (index < 0 || index >= playQueue.size()) return;
+        queueIndex = index;
+        NcmSong song = playQueue.get(index);
+        currentSong = song;
+        lyrics = new CopyOnWriteArrayList<>();
+        statusText = "获取播放地址…";
+        final long id = song.id;
+
+        api().async(() -> {
+            NcmSong full = song;
+            if (song.coverUrl == null || song.coverUrl.isEmpty() || song.durationMs <= 0) {
+                try {
+                    full = api().getSong(id);
+                    full.playUrl = song.playUrl;
+                } catch (Exception ignored) {
+                }
+            }
+            String url = api().getMusicURL(String.valueOf(id));
+            full.playUrl = url;
+            List<NcmLyricLine> lrc;
+            try {
+                lrc = api().getLyrics(id);
+            } catch (Exception e) {
+                lrc = List.of();
+            }
+            return new Pair<>(full, lrc);
+        }, pair -> {
+            if (currentSong == null || currentSong.id != id) return;
+            NcmSong full = pair.getFirst();
+            currentSong = full;
+            if (queueIndex >= 0 && queueIndex < playQueue.size()) {
+                playQueue.set(queueIndex, full);
+            }
+            lyrics = new CopyOnWriteArrayList<>(pair.getSecond());
+            if (full.playUrl == null || full.playUrl.isEmpty()) {
+                errorText = "无可用播放地址 (可能需登录/会员)";
+                statusText = "无法播放";
+                return;
+            }
+            statusText = "播放: " + full.name;
+            audio.playUrl(full.playUrl, full.durationMs);
+        }, ex -> errorText = "播放失败: " + ex.getMessage());
+    }
+
+    public void playRelative(int delta) {
+        if (playQueue.isEmpty()) return;
+        if (repeatOne && delta == 1 && audio.progress() > 0.95f) {
+            audio.seekRatio(0f);
+            audio.resume();
+            return;
+        }
+        int next;
+        if (shuffle) {
+            if (playQueue.size() == 1) {
+                next = queueIndex;
+            } else {
+                next = queueIndex;
+                int guard = 0;
+                while (next == queueIndex && guard++ < 10) {
+                    next = (int) (Math.random() * playQueue.size());
+                }
+            }
+        } else {
+            next = queueIndex + delta;
+            if (next < 0) next = playQueue.size() - 1;
+            if (next >= playQueue.size()) next = 0;
+        }
+        playIndex(next);
+    }
+
+    private void onTrackEnded() {
+        if (repeatOne) {
+            audio.seekRatio(0f);
+            audio.resume();
+            return;
+        }
+        if (page == Page.FM || (currentSong != null && fmQueue.contains(currentSong))) {
+            if (queueIndex >= playQueue.size() - 1) {
+                loadFm();
+                return;
+            }
+        }
+        playRelative(1);
+    }
+
+    /* ================================================================== */
+    /*  ticks / images                                                    */
+    /* ================================================================== */
+
+    public void tickBanner() {
+        if (banners == null || banners.size() <= 1) return;
+        long now = System.currentTimeMillis();
+        if (now - bannerLastSwitchMs > 5000) {
+            bannerIndex = (bannerIndex + 1) % banners.size();
+            bannerLastSwitchMs = now;
+        }
+    }
+
+    public void tickSearchDebounce() {
+        if (pendingSearch == null) return;
+        if (System.currentTimeMillis() - lastSearchTypeMs < 550) return;
+        String q = pendingSearch;
+        pendingSearch = null;
+        if (page == Page.SEARCH) {
+            runSearch(q);
+        }
+    }
+
+    public void onSearchTyped() {
+        pendingSearch = searchQuery;
+        lastSearchTypeMs = System.currentTimeMillis();
+    }
+
+    /**
+     * Covers are loaded lazily when a row/card paints. Downloads go through a
+     * FIFO queue with optional priority so the now-playing cover / avatar are
+     * never starved by a wall of list thumbnails.
+     */
+    private void prefetchCovers() {
+        // no bulk prefetch
+    }
+
+    private static final int MAX_IN_FLIGHT_IMAGES = 3;
+
+    private static final class ImageJob {
+        final String url;
+        final String key;
+        final String cacheKey;
+        final boolean circular;
+        final boolean priority;
+
+        ImageJob(String url, String key, String cacheKey, boolean circular, boolean priority) {
+            this.url = url;
+            this.key = key;
+            this.cacheKey = cacheKey;
+            this.circular = circular;
+            this.priority = priority;
+        }
+    }
+
+    /** Pending downloads: priority jobs are drained first, then FIFO normals. */
+    private final java.util.ArrayDeque<ImageJob> imageQueueHigh = new java.util.ArrayDeque<>();
+    private final java.util.ArrayDeque<ImageJob> imageQueueNorm = new java.util.ArrayDeque<>();
+    private int imagesInFlight = 0;
+
+    public Identifier ensureImage(String url, String key) {
+        return ensureImage(url, key, false, false);
+    }
+
+    public Identifier ensureImage(String url, String key, boolean circular) {
+        return ensureImage(url, key, circular, false);
+    }
+
+    /**
+     * @param circular only for user avatars – album covers must stay square
+     * @param priority true for now-playing cover / header avatar (jump the queue)
+     */
+    public Identifier ensureImage(String url, String key, boolean circular, boolean priority) {
+        if (url == null || url.isEmpty()) {
+            if (debug.getValue()) {
+                System.out.println("[MusicPlayer] ensureImage SKIP empty url, key=" + key);
+            }
+            return null;
+        }
+        String cacheKey = circular ? ("c:" + key) : key;
+        Identifier cached = imageCache.get(cacheKey);
+        if (cached != null) {
+            if (debug.getValue()) {
+                System.out.println("[MusicPlayer] image HIT cache: " + url + "  (key=" + key + ")");
+            }
+            return cached;
+        }
+        if (Boolean.TRUE.equals(imageFailed.get(cacheKey))) {
+            if (debug.getValue()) {
+                System.out.println("[MusicPlayer] image KNOWN FAILED: " + url + "  (key=" + key + ")");
+            }
+            return null;
+        }
+        if (imageLoading.containsKey(cacheKey)) {
+            pumpImageQueue();
+            return null;
+        }
+
+        // Already queued?
+        if (!isQueued(cacheKey)) {
+            ImageJob job = new ImageJob(url, key, cacheKey, circular, priority);
+            if (debug.getValue()) {
+                String kind = circular ? "circle" : "square";
+                String prio = priority ? " [priority]" : "";
+                System.out.println("[MusicPlayer] enqueue image: " + url + "  (key=" + key + ", " + kind + prio + ")");
+            }
+            if (priority) {
+                imageQueueHigh.addLast(job);
+            } else {
+                imageQueueNorm.addLast(job);
+            }
+            imageLoading.put(cacheKey, true); // reserved – prevents duplicate enqueue
+        }
+        pumpImageQueue();
+        return null;
+    }
+
+    private boolean isQueued(String cacheKey) {
+        for (ImageJob j : imageQueueHigh) {
+            if (j.cacheKey.equals(cacheKey)) return true;
+        }
+        for (ImageJob j : imageQueueNorm) {
+            if (j.cacheKey.equals(cacheKey)) return true;
+        }
+        return false;
+    }
+
+    private void pumpImageQueue() {
+        while (imagesInFlight < MAX_IN_FLIGHT_IMAGES) {
+            ImageJob job = imageQueueHigh.pollFirst();
+            if (job == null) job = imageQueueNorm.pollFirst();
+            if (job == null) return;
+            // Skip if another path already filled the cache.
+            if (imageCache.containsKey(job.cacheKey)) {
+                imageLoading.remove(job.cacheKey);
+                continue;
+            }
+            startImageJob(job);
+        }
+    }
+
+    private void startImageJob(ImageJob job) {
+        imagesInFlight++;
+        imageLoading.put(job.cacheKey, true);
+        api().async(() -> api().downloadImage(job.url, job.key, job.circular), id -> {
+            if (id != null) {
+                imageCache.put(job.cacheKey, id);
+                if (debug.getValue()) {
+                    System.out.println("[MusicPlayer] image OK: " + job.url + " -> " + id);
+                }
+            } else {
+                imageFailed.put(job.cacheKey, true);
+                if (debug.getValue()) {
+                    System.out.println("[MusicPlayer] image NULL: " + job.url);
+                }
+            }
+            imageLoading.remove(job.cacheKey);
+            imagesInFlight = Math.max(0, imagesInFlight - 1);
+            pumpImageQueue();
+        }, ex -> {
+            imageFailed.put(job.cacheKey, true);
+            imageLoading.remove(job.cacheKey);
+            imagesInFlight = Math.max(0, imagesInFlight - 1);
+            if (debug.getValue()) {
+                System.out.println("[MusicPlayer] image FAIL: " + job.url + "  reason=" + ex.getMessage());
+            }
+            pumpImageQueue();
+        });
+    }
+
+    /** Stop all music (used if needed externally). */
+    public void stopPlayback() {
+        audio.stop();
+        currentSong = null;
+    }
+
+    public String currentLyricLine() {
+        if (lyrics == null || lyrics.isEmpty()) return "";
+        long pos = audio.positionMs();
+        String cur = "";
+        for (NcmLyricLine line : lyrics) {
+            if (line.timeMs <= pos) {
+                cur = line.text;
+            } else {
+                break;
+            }
+        }
+        return cur;
+    }
+
+    public static String ellipsize(String s, int maxChars) {
+        if (s == null) return "";
+        if (s.length() <= maxChars) return s;
+        if (maxChars <= 1) return "...";
+        return s.substring(0, maxChars - 1) + "...";
+    }
+
+    public static String formatMs(long ms) {
+        long total = Math.max(0, ms / 1000);
+        long m = total / 60;
+        long s = total % 60;
+        return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    public static float clamp(float v, float lo, float hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+}

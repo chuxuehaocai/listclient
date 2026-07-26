@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__idea__list_directory_tree",
+      "Bash(./gradlew build *)",
+      "Bash(./gradlew dependencies *)",
+      "Bash(jar tf *)",
+      "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar net.minecraft.client.gui.GuiGraphicsExtractor)",
+      "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar net.minecraft.client.renderer.GameRenderer)",
+      "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar com.mojang.blaze3d.systems.RenderSystem)",
+      "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar com.mojang.blaze3d.vertex.BufferBuilder)",
+      "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar com.mojang.blaze3d.vertex.VertexConsumer)",
+      "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar com.mojang.blaze3d.vertex.VertexFormat)",
+      "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar com.mojang.blaze3d.platform.TextureUtil)",
+      "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar com.mojang.blaze3d.opengl.GlStateManager)",
+      "Bash(javap -c -p \".gradle\\\\loom-cache\\\\minecraftMaven\\\\net\\\\minecraft\\\\minecraft-merged-043a8b3edf\\\\26.2\\\\minecraft-merged-043a8b3edf-26.2.jar\")",
+      "Bash(dir \"build\\\\tmp-javap\")",
+      "Bash(dir \"build\\\\tmp-javap\\\\net\\\\minecraft\\\\client\\\\renderer\\\\texture\")"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "idea"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.naominet.listclient.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "refmap": "listclient.refmap.json",
+  "mixins": [
+  ],
+  "client": [
+    "mixins.MixinCapeLayer",
+    "mixins.MixinChatScreen",
+    "mixins.MixinConnection",
+    "mixins.MixinHud",
+    "mixins.MixinKeyboardHandler",
+    "mixins.MixinLocalPlayer",
+    "mixins.MixinMinecraft",
+    "mixins.MixinMouseHandler"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}

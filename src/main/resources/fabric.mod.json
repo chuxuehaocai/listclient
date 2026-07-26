@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "listclient",
+  "version": "${version}",
+  "name": "listclient",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "asshole",
+  "environment": "client",
+  "entrypoints": {},
+  "mixins": [
+    "listclient.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}

@@ -1,0 +1,23 @@
+# Gradle
+/.gradle/
+/build/
+
+# IDE
+/.idea/
+*.iml
+
+# Minecraft runtime (generated at launch)
+/run/
+
+# Compiled / decompiled output (generated)
+/dev/
+/net/
+/listclient/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc local files
+b.txt
+test_image.ps1
