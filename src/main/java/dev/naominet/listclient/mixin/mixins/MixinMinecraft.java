@@ -57,9 +57,9 @@ public class MixinMinecraft {
 
     @Inject(
             at = @At("HEAD"),
-            method = "stop"
+            method = "close"
     )
-    public void onStop(CallbackInfo ci) {
+    public void onClose(CallbackInfo ci) {
         ListClient.instance.stop();
     }
 }

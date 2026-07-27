@@ -16,6 +16,7 @@ import dev.naominet.listclient.ui.theme.Icons;
 import dev.naominet.listclient.ui.theme.M3;
 import dev.naominet.listclient.ui.theme.MonetColor;
 import dev.naominet.listclient.ui.theme.MonetTheme;
+import dev.naominet.listclient.ui.theme.Ripple;
 import dev.naominet.listclient.utils.Lang;
 import dev.naominet.listclient.utils.MouseData;
 import dev.naominet.listclient.utils.NcmAudioPlayer;
@@ -66,6 +67,7 @@ public class MusicPlayer extends Module {
         MINE("music.page.mine"),
         FM("music.page.fm"),
         PLAYLIST("music.page.playlist"),
+        LYRICS("music.page.lyrics"),
         LOGIN("music.page.login");
 
         /** Translation key – resolve via {@link #label()} at draw time. */
@@ -138,6 +140,14 @@ public class MusicPlayer extends Module {
     public final List<NcmSong> playQueue = new CopyOnWriteArrayList<>();
     public int queueIndex = -1;
     public List<NcmLyricLine> lyrics = new CopyOnWriteArrayList<>();
+    public boolean lyricsLoading;
+    public String lyricsError = "";
+    public float lyricScroll;
+    public float lyricScrollVelocity;
+    public boolean lyricsFollowPlayback = true;
+    public long lyricsManualAt;
+    public long lyricMotionAt;
+    public Page lyricsReturnPage = Page.HOME;
     public boolean shuffle;
     public boolean repeatOne;
     public float volume = 0.85f;
@@ -306,18 +316,16 @@ public class MusicPlayer extends Module {
         // transport hint buttons (visual only; click handled in mouseClick)
         int bx = x + w - 52;
         int by = y + 8;
-        drawMiniBtn(g, bx, by, audio.isPlaying() ? Icons.PAUSE : Icons.PLAY_ARROW, audio.isPlaying());
-        drawMiniBtn(g, bx + 18, by, Icons.SKIP_NEXT, false);
+        drawMiniBtn(g, bx, by, audio.isPlaying() ? Icons.PAUSE : Icons.PLAY_ARROW,
+                audio.isPlaying(), "widget-toggle");
+        drawMiniBtn(g, bx + 18, by, Icons.SKIP_NEXT, false, "widget-next");
 
-        // M3 linear progress: primary indicator on surface-container-highest track.
+        // Compact M3 expressive determinate progress indicator.
         float prog = currentSong == null ? 0f : audio.progress();
         int barX = textX;
         int barW = w - (textX - x) - 58;
-        int barY = y + h - 5;
-        g.fill(barX, barY, barX + barW, barY + 2, M3.SURFACE_CONTAINER_HIGHEST);
-        if (prog > 0) {
-            g.fill(barX, barY, barX + Math.max(1, (int) (barW * prog)), barY + 2, M3.PRIMARY);
-        }
+        int barY = y + h - 7;
+        M3.wavyProgress(g, barX, barY, barW, 5, prog);
     }
 
     /**
@@ -325,10 +333,11 @@ public class MusicPlayer extends Module {
      * Selection is a container ROLE change per M3 (primary when active), not a
      * state layer – state layers are reserved for transient interaction.
      */
-    private void drawMiniBtn(GuiGraphicsExtractor g, int x, int y, String icon, boolean active) {
+    private void drawMiniBtn(GuiGraphicsExtractor g, int x, int y, String icon, boolean active, String key) {
         int bg = active ? M3.PRIMARY : M3.SECONDARY_CONTAINER;
         int fg = active ? M3.ON_PRIMARY : M3.ON_SECONDARY_CONTAINER;
         M3.roundRect(g, x, y, 16, 12, M3.pill(12), bg);
+        Ripple.draw(g, key, x, y, 16, 12, fg);
         Icons.drawCentered(g, icon, 8, x + 8f, y + 6f, fg);
     }
 
@@ -352,11 +361,13 @@ public class MusicPlayer extends Module {
             int by = y + 8;
             pressOpenedButtons = false;
             if (isHovered(bx, by, bx + 16, by + 12, mouseX, mouseY)) {
+                Ripple.press("widget-toggle", mouseX, mouseY);
                 audio.toggle();
                 pressOpenedButtons = true;
                 return;
             }
             if (isHovered(bx + 18, by, bx + 34, by + 12, mouseX, mouseY)) {
+                Ripple.press("widget-next", mouseX, mouseY);
                 playRelative(1);
                 pressOpenedButtons = true;
                 return;
@@ -394,6 +405,13 @@ public class MusicPlayer extends Module {
     /* ================================================================== */
 
     public void switchTo(Page target) {
+        if (target == Page.LYRICS) {
+            if (page != Page.LYRICS) lyricsReturnPage = page == Page.PLAYLIST ? Page.HOME : page;
+            page = Page.LYRICS;
+            searchFocused = false;
+            lyricsFollowPlayback = true;
+            return;
+        }
         if (target == Page.LOGIN) {
             page = Page.LOGIN;
             beginQrLogin(qrTexture == null);
@@ -459,6 +477,7 @@ public class MusicPlayer extends Module {
             case "prev" -> playRelative(-1);
             case "next" -> playRelative(1);
             case "mode" -> cycleMode();
+            case "lyrics_back" -> switchTo(lyricsReturnPage == Page.LYRICS ? Page.HOME : lyricsReturnPage);
             case "seek" -> {
                 // panel-relative: bar starts at panelX + 110, width PANEL_W-200 (screen passes absolute)
                 // Screen computes ratio itself for seek/volume when needed; keep simple absolute math here.
@@ -488,6 +507,8 @@ public class MusicPlayer extends Module {
                     handlePlaySongClick(id.substring("play_song:".length()));
                 } else if (id.startsWith("open_pl:")) {
                     handleOpenPlaylist(id.substring("open_pl:".length()));
+                } else if (id.startsWith("lyric:")) {
+                    seekToLyric(Integer.parseInt(id.substring("lyric:".length())));
                 } else if (id.startsWith("banner:")) {
                     handleBannerClick();
                 }
@@ -862,6 +883,12 @@ public class MusicPlayer extends Module {
         NcmSong song = playQueue.get(index);
         currentSong = song;
         lyrics = new CopyOnWriteArrayList<>();
+        lyricsLoading = true;
+        lyricsError = "";
+        lyricScroll = 0f;
+        lyricScrollVelocity = 0f;
+        lyricMotionAt = 0L;
+        lyricsFollowPlayback = true;
         statusText = Lang.tr("music.status.fetching_url");
         final long id = song.id;
 
@@ -876,12 +903,7 @@ public class MusicPlayer extends Module {
             }
             String url = api().getMusicURL(String.valueOf(id));
             full.playUrl = url;
-            List<NcmLyricLine> lrc;
-            try {
-                lrc = api().getLyrics(id);
-            } catch (Exception e) {
-                lrc = List.of();
-            }
+            List<NcmLyricLine> lrc = api().getLyrics(id);
             return new Pair<>(full, lrc);
         }, pair -> {
             if (currentSong == null || currentSong.id != id) return;
@@ -893,6 +915,8 @@ public class MusicPlayer extends Module {
                 playQueue.set(queueIndex, full);
             }
             lyrics = new CopyOnWriteArrayList<>(pair.getSecond());
+            lyricsLoading = false;
+            lyricsError = lyrics.isEmpty() ? Lang.tr("music.lyrics_empty") : "";
             if (full.playUrl == null || full.playUrl.isEmpty()) {
                 errorText = Lang.tr("music.status.no_play_url");
                 statusText = Lang.tr("music.status.cannot_play");
@@ -900,7 +924,12 @@ public class MusicPlayer extends Module {
             }
             statusText = Lang.tr("music.status.playing", full.name);
             audio.playUrl(full.playUrl, full.durationMs);
-        }, ex -> errorText = Lang.tr("music.status.play_failed", ex.getMessage()));
+        }, ex -> {
+            if (currentSong == null || currentSong.id != id) return;
+            lyricsLoading = false;
+            lyricsError = Lang.tr("music.lyrics_error");
+            errorText = Lang.tr("music.status.play_failed", ex.getMessage());
+        });
     }
 
     /**
@@ -1133,18 +1162,34 @@ public class MusicPlayer extends Module {
         MonetTheme.reset();
     }
 
-    public String currentLyricLine() {
-        if (lyrics == null || lyrics.isEmpty()) return "";
+    public int currentLyricIndex() {
+        if (lyrics == null || lyrics.isEmpty()) return -1;
         long pos = audio.positionMs();
-        String cur = "";
-        for (NcmLyricLine line : lyrics) {
-            if (line.timeMs <= pos) {
-                cur = line.text;
+        int lo = 0;
+        int hi = lyrics.size() - 1;
+        int result = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (lyrics.get(mid).timeMs <= pos) {
+                result = mid;
+                lo = mid + 1;
             } else {
-                break;
+                hi = mid - 1;
             }
         }
-        return cur;
+        return result;
+    }
+
+    public void seekToLyric(int index) {
+        if (lyrics == null || index < 0 || index >= lyrics.size()) return;
+        audio.seekMs(lyrics.get(index).timeMs);
+        lyricsFollowPlayback = true;
+        lyricScrollVelocity = 0f;
+    }
+
+    public String currentLyricLine() {
+        int index = currentLyricIndex();
+        return index < 0 ? "" : lyrics.get(index).text;
     }
 
     public static String ellipsize(String s, int maxChars) {

@@ -170,6 +170,97 @@ final class GlShapes {
         submit(g, xy, col, x - pad, y - pad, x + w + pad, y + h + pad);
     }
 
+    /** Soft elliptical field built from GPU-interpolated alpha rings. */
+    static void radialGlow(GuiGraphicsExtractor g, float x, float y, float w, float h, int argb) {
+        if (w <= 0 || h <= 0 || (argb >>> 24) == 0) return;
+        int segments = 32;
+        float cx = x + w / 2f;
+        float cy = y + h / 2f;
+        float rx = w / 2f;
+        float ry = h / 2f;
+        int clear = argb & 0x00FFFFFF;
+        float[] xy = new float[segments * 8];
+        int[] col = new int[segments * 4];
+        int p = 0;
+        for (int i = 0; i < segments; i++) {
+            double a0 = Math.PI * 2.0 * i / segments;
+            double a1 = Math.PI * 2.0 * (i + 1) / segments;
+            float x0 = cx + (float) Math.cos(a0) * rx;
+            float y0 = cy + (float) Math.sin(a0) * ry;
+            float x1 = cx + (float) Math.cos(a1) * rx;
+            float y1 = cy + (float) Math.sin(a1) * ry;
+            p = quad(xy, col, p,
+                    cx, cy, argb,
+                    x1, y1, clear,
+                    x0, y0, clear,
+                    x0, y0, clear);
+        }
+        submit(g, xy, col, x, y, x + w, y + h);
+    }
+
+    /**
+     * Filled, anti-aliased sine band clipped horizontally to a determinate
+     * progress boundary. The center line oscillates while the thickness stays
+     * constant, producing the M3 expressive wavy progress treatment.
+     */
+    static void wavyBand(GuiGraphicsExtractor g, float x, float y, float w, float h,
+                         float progress, float phase, int argb) {
+        float filled = w * Math.max(0f, Math.min(1f, progress));
+        if (filled <= 0f || h <= 0f || (argb >>> 24) == 0) return;
+
+        float amplitude = Math.min(1.05f, Math.max(0.35f, h * 0.16f));
+        float half = Math.max(0.6f, h * 0.16f);
+        float wavelength = Math.max(10f, h * 3f);
+        int segments = Math.max(2, (int) Math.ceil(filled / 1.5f));
+        int capSegments = 6;
+        float[] xy = new float[(segments * 3 + capSegments) * 8];
+        int[] col = new int[(segments * 3 + capSegments) * 4];
+        int clear = argb & 0x00FFFFFF;
+        int p = 0;
+
+        for (int i = 0; i < segments; i++) {
+            float x0 = filled * i / segments;
+            float x1 = filled * (i + 1) / segments;
+            float c0 = y + h / 2f + (float) Math.sin((x0 / wavelength) * Math.PI * 2f + phase) * amplitude;
+            float c1 = y + h / 2f + (float) Math.sin((x1 / wavelength) * Math.PI * 2f + phase) * amplitude;
+            float top0 = c0 - half;
+            float top1 = c1 - half;
+            float bottom0 = c0 + half;
+            float bottom1 = c1 + half;
+
+            p = quad(xy, col, p,
+                    x + x0, top0, argb,
+                    x + x1, top1, argb,
+                    x + x1, top1 - FEATHER, clear,
+                    x + x0, top0 - FEATHER, clear);
+            p = quad(xy, col, p,
+                    x + x0, bottom0, argb,
+                    x + x1, bottom1, argb,
+                    x + x1, top1, argb,
+                    x + x0, top0, argb);
+            p = quad(xy, col, p,
+                    x + x0, bottom0 + FEATHER, clear,
+                    x + x1, bottom1 + FEATHER, clear,
+                    x + x1, bottom1, argb,
+                    x + x0, bottom0, argb);
+        }
+
+        float endCenter = y + h / 2f
+                + (float) Math.sin((filled / wavelength) * Math.PI * 2f + phase) * amplitude;
+        for (int i = 0; i < capSegments; i++) {
+            double a0 = -Math.PI / 2.0 + Math.PI * i / capSegments;
+            double a1 = -Math.PI / 2.0 + Math.PI * (i + 1) / capSegments;
+            p = quad(xy, col, p,
+                    x + filled, endCenter, argb,
+                    x + filled + (float) Math.cos(a1) * half,
+                    endCenter + (float) Math.sin(a1) * half, argb,
+                    x + filled + (float) Math.cos(a0) * half,
+                    endCenter + (float) Math.sin(a0) * half, argb,
+                    x + filled, endCenter, argb);
+        }
+        submit(g, xy, col, x - 1, y - 1, x + filled + half + 1, y + h + 1);
+    }
+
     /* ================================================================== */
     /*  geometry                                                          */
     /* ================================================================== */

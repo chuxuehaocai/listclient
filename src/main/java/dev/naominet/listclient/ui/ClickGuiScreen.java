@@ -392,9 +392,14 @@ public class ClickGuiScreen extends Screen {
             if (!values.isEmpty()) {
                 int ex = x + w - 58;
                 int ey = y + (CARD_H - 12) / 2;
+                Object chevronKey = new HoverKey(m.getName() + ":expand:ripple");
+                Ripple.draw(g, chevronKey, ex, ey, 12, 12, M3.ON_SURFACE_VARIANT);
                 Icons.drawCentered(g, open ? Icons.EXPAND_LESS : Icons.EXPAND_MORE, 9,
                         ex + 6, ey + 6, M3.ON_SURFACE_VARIANT);
-                addZone(ex, ey, 12, 12, () -> toggleExpanded(m), null);
+                addZone(ex, ey, 12, 12, () -> {
+                    Ripple.press(chevronKey, mouseX, mouseY);
+                    toggleExpanded(m);
+                }, null);
             }
 
             if (extra > 2) {
@@ -449,10 +454,15 @@ public class ClickGuiScreen extends Screen {
             fg = M3.ON_SURFACE_VARIANT;
         }
         M3.roundRect(g, chipX, chipY, chipW, 13, M3.pill(13), bg);
+        Object rippleKey = new HoverKey(m.getName() + ":bind:ripple");
+        Ripple.draw(g, rippleKey, chipX, chipY, chipW, 13, fg);
         Icons.drawCentered(g, Icons.KEYBOARD, 8, chipX + 9, chipY + 6.5f, fg);
         smallFont.drawString(g, keyLabel, chipX + 16,
                 chipY + (13 - smallFont.lineHeight()) / 2f, fg);
-        addZone(chipX, chipY, chipW, 13, () -> binding = listening ? null : m, null);
+        addZone(chipX, chipY, chipW, 13, () -> {
+            Ripple.press(rippleKey, mouseX, mouseY);
+            binding = listening ? null : m;
+        }, null);
     }
 
     private int drawValueRow(GuiGraphicsExtractor g, Value<?> v, int x, int y, int w) {
@@ -506,6 +516,9 @@ public class ClickGuiScreen extends Screen {
                         ? M3.layered(M3.SURFACE_CONTAINER_HIGHEST, M3.ON_SURFACE, M3.STATE_HOVER)
                         : M3.SURFACE_CONTAINER_HIGHEST;
                 M3.roundRect(g, cx, chipY, chipW, 13, M3.SHAPE_S, bg);
+                Object rippleKey = new HoverKey(v.getName() + ":mode:" + option);
+                Ripple.draw(g, rippleKey, cx, chipY, chipW, 13,
+                        sel ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE);
                 if (sel) {
                     Icons.drawCentered(g, Icons.CHECK, 7, cx + 8, chipY + 6.5f, M3.ON_SECONDARY_CONTAINER);
                 }
@@ -513,7 +526,10 @@ public class ClickGuiScreen extends Screen {
                         chipY + (13 - smallFont.lineHeight()) / 2f,
                         sel ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE_VARIANT);
                 String opt = option;
-                addZone(cx, chipY, chipW, 13, () -> mode.setMode(opt), null);
+                addZone(cx, chipY, chipW, 13, () -> {
+                    Ripple.press(rippleKey, mouseX, mouseY);
+                    mode.setMode(opt);
+                }, null);
             }
             return y + ROW_H;
         }
@@ -527,6 +543,9 @@ public class ClickGuiScreen extends Screen {
         int track = M3.lerp(M3.SURFACE_CONTAINER_HIGHEST, M3.PRIMARY, t);
         int ring = M3.lerp(M3.OUTLINE, M3.PRIMARY, t);
         M3.outlinedRoundRect(g, x, y, 24, 12, M3.pill(12), track, ring);
+        Object rippleKey = new HoverKey(key.toString() + ":switch:ripple");
+        Ripple.draw(g, rippleKey, x - 2, y - 2, 28, 16,
+                checked ? M3.ON_PRIMARY : M3.ON_SURFACE);
         int thumbSize = Math.round(6 + 2 * t);
         float thumbX = x + 3 + (24 - 6 - thumbSize / 2f - 3) * t;
         float thumbY = y + 6 - thumbSize / 2f;
@@ -542,7 +561,10 @@ public class ClickGuiScreen extends Screen {
         int thumb = M3.lerp(M3.OUTLINE, M3.ON_PRIMARY, t);
         M3.roundRect(g, Math.round(thumbX), Math.round(thumbY), thumbSize, thumbSize,
                 M3.pill(thumbSize), thumb);
-        addZone(x - 2, y - 2, 28, 16, toggle, null);
+        addZone(x - 2, y - 2, 28, 16, () -> {
+            Ripple.press(rippleKey, mouseX, mouseY);
+            toggle.run();
+        }, null);
     }
 
     /* ================================================================== */

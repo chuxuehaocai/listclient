@@ -10,13 +10,11 @@ import dev.naominet.listclient.ui.theme.M3;
 import dev.naominet.listclient.utils.AnimationUtils;
 import dev.naominet.listclient.utils.RenderUtils;
 import dev.naominet.listclient.utils.font.TTFFontRenderer;
-import dev.naominet.listclient.value.Option;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.Holder;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 
-import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Map;
 
@@ -29,8 +27,6 @@ public class Interface extends Module {
     public static ArrayList<Module> sortedModuleList;
     public static boolean sortedModuleListNeedUpdata = true;
     float yPlus = 2;
-    private Option rainbow = new Option("Rainbow", true);
-    private int mainColor = -1;
 
     /** M3 type scale – every HUD string goes through TTF. */
     private final TTFFontRenderer brandFont = M3.title();
@@ -39,30 +35,34 @@ public class Interface extends Module {
     public Interface() {
         super("Interface", Category.Render);
         setEnable(true);
-        addValues(rainbow);
     }
 
     @EventTarget
     public void onRender2D(EventRender2D e) {
         GuiGraphicsExtractor extractor = e.getExtractor();
-        int rainbowTick = 0;
 
         // Drive the Monet color morph from the HUD so the whole client recolors
         // live as the album seed changes, even with no screen open.
         dev.naominet.listclient.ui.theme.MonetTheme.update();
 
-        setSuffix("Classic Experience");
-        // Watermark chip: on-colors need their container – a bare on-surface
-        // string washes out over bright scenes (sky, snow).
-        float wmW = brandFont.width("List [Build 4.0] [Development Build]");
-        float wmH = brandFont.lineHeight();
-        M3.roundRect(extractor, (int) getX() - 4, (int) getY() - 2, (int) wmW + 8, (int) wmH + 4,
-                M3.SHAPE_S, M3.withAlpha(M3.SURFACE_CONTAINER, 0xB4));
-        float brandEnd = brandFont.drawString(extractor, "List ",
-                (float) getX(), (float) getY(), M3.ON_SURFACE);
-        brandFont.drawString(extractor, "[Build 4.0] [Development Build]",
-                brandEnd, (float) getY(), M3.ON_SURFACE_VARIANT);
-        setXYWH(getX(), getY(), wmW, wmH);
+        String buildLabel = "4.0 · DEV";
+        int padX = 5;
+        int padY = 2;
+        int gap = 3;
+        float brandW = brandFont.width("List");
+        float buildW = M3.labelSmall().width(buildLabel);
+        int wmW = (int) Math.ceil(padX * 2 + brandW + gap + buildW);
+        int wmH = (int) Math.ceil(Math.max(brandFont.lineHeight(), M3.labelSmall().lineHeight())) + padY * 2;
+        int wmX = (int) getX();
+        int wmY = (int) getY();
+        M3.shadowSoft(extractor, wmX, wmY, wmW, wmH, M3.pill(wmH));
+        M3.roundRect(extractor, wmX, wmY, wmW, wmH, M3.pill(wmH),
+                M3.withAlpha(M3.SURFACE_CONTAINER_HIGH, 0xE8));
+        float brandY = wmY + (wmH - brandFont.lineHeight()) / 2f;
+        float suffixY = wmY + (wmH - M3.labelSmall().lineHeight()) / 2f;
+        float brandEnd = brandFont.drawString(extractor, "List", wmX + padX, brandY, M3.PRIMARY);
+        M3.labelSmall().drawString(extractor, buildLabel, brandEnd + gap, suffixY, M3.ON_SURFACE_VARIANT);
+        setXYWH(wmX, wmY, wmW, wmH);
 
         RenderUtils.drawTexture(extractor, "cute/cute.png", "cute",
                 mc.getWindow().getGuiScaledWidth() - 85, mc.getWindow().getGuiScaledHeight() - 75, 80, 75);
@@ -76,8 +76,7 @@ public class Interface extends Module {
             if (sortedModuleListNeedUpdata) {
                 sortedModuleList = (ArrayList<Module>) ModuleManager.instance.getModules().clone();
                 sortedModuleList.sort((o1, o2) -> Float.compare(
-                        listFont.width(o2.getSuffix() == null ? o2.getName() : o2.getName() + " " + o2.getSuffix()),
-                        listFont.width(o1.getSuffix() == null ? o1.getName() : o1.getName() + " " + o1.getSuffix())));
+                        renderedWidth(o2), renderedWidth(o1)));
                 sortedModuleListNeedUpdata = false;
             }
 
@@ -99,28 +98,25 @@ public class Interface extends Module {
 
         float yOffset = yPlus;
 
-        // Module chips: fixed row height (no more width-coupled height jank that
-        // left gaps), each chip slides in from the right via animX and collapses
-        // vertically via animY. Every chip is drawn inside its OWN GL scissor
-        // band so its soft shadow can't bleed onto — and stack darkly with —
-        // the chip below it.
+        // Dense M3 one-line rows: tonal container, primary name, variant suffix.
         int lh = (int) Math.ceil(listFont.lineHeight());
-        int chipH = lh + 4;      // chip content height
-        int band = chipH + 4;    // row pitch: 4px gap holds each chip's shadow
-        int dot = 3;             // leading M3 accent indicator
-        int textPad = 8 + dot;   // left padding: gap + dot + gap
+        int rowH = Math.max(9, lh);
+        int band = rowH;
+        int textPad = 3;
+        int suffixGap = 1;
         if (sortedModuleList != null) {
             for (Module m : sortedModuleList) {
                 // MusicPlayer is an entry keybind, not a HUD array item.
                 if (m instanceof MusicPlayer) continue;
 
-                String suffix = m.getSuffix() == null ? "" : " " + m.getSuffix();
-                float textW = listFont.width(m.getName() + suffix);
-                int chipW = (int) textW + textPad + 6;
+                String suffix = m.getSuffix() == null ? "" : m.getSuffix();
+                float nameW = listFont.width(m.getName());
+                float suffixW = suffix.isEmpty() ? 0f : suffixGap + listFont.width(suffix);
+                int rowW = (int) Math.ceil(nameW + suffixW) + textPad * 2;
 
-                // animX: horizontal slide (0 = fully in, chipW+8 = off the right edge).
+                // animX: horizontal slide (0 = fully in, rowW+8 = off-screen).
                 // animY: 0..1 vertical reveal used to collapse hidden rows.
-                float xTarget = m.isEnable() ? 0f : chipW + 8f;
+                float xTarget = m.isEnable() ? 0f : rowW + 8f;
                 float yTarget = m.isEnable() ? 1f : 0f;
                 m.setAnimX(AnimationUtils.easeExp(m.getAnimX(), xTarget, 12f));
                 m.setAnimY(AnimationUtils.easeExp(m.getAnimY(), yTarget, 12f));
@@ -131,37 +127,34 @@ public class Interface extends Module {
                 }
                 int bandThis = Math.max(1, Math.round(band * reveal));
 
-                int chipX = (int) (startX - chipW + m.getAnimX());
+                int rowX = (int) (startX - rowW + m.getAnimX());
                 int ry = (int) yOffset;
 
-                mainColor = rainbow.getValue()
-                        ? new Color(Color.HSBtoRGB((float) ((double) this.mc.player.tickCount / 50.0
-                        + Math.sin((double) rainbowTick / 50.0 * 1.6)) % 1.0f, 0.5f, 1.0f)).getRGB()
-                        : M3.PRIMARY;
-                if (++rainbowTick > 50) {
-                    rainbowTick = 0;
-                }
+                extractor.enableScissor(Math.max(0, rowX - 1), ry, startX, ry + bandThis);
+                try {
+                    M3.roundRect(extractor, rowX, ry, rowW, rowH, M3.SHAPE_XS,
+                            M3.withAlpha(M3.SURFACE_CONTAINER_HIGH, 0xEC), true, false, true, false);
 
-                // Clip everything for this chip to its band; the shadow's downward
-                // spread stops at the gap and never touches the next chip.
-                extractor.enableScissor(chipX - 6, ry, startX + 2, ry + bandThis);
-                // M3 chip: pill silhouette (left corners; right runs off-screen),
-                // tonal surface-container fill, soft contained shadow.
-                M3.shadowSoft(extractor, chipX, ry, chipW, chipH, M3.pill(chipH));
-                M3.roundRect(extractor, chipX, ry, chipW, chipH, M3.pill(chipH),
-                        M3.withAlpha(M3.SURFACE_CONTAINER, 0xE6), true, false, true, false);
-                // Leading accent dot (Monet primary).
-                int dotY = ry + (chipH - dot) / 2;
-                M3.roundRect(extractor, chipX + 6, dotY, dot, dot, M3.pill(dot), M3.PRIMARY);
-                float textY = ry + (chipH - listFont.lineHeight()) / 2f;
-                listFont.drawString(extractor, m.getName(), chipX + textPad, textY, mainColor);
-                listFont.drawString(extractor, suffix,
-                        chipX + textPad + listFont.width(m.getName()), textY, M3.ON_SURFACE_VARIANT);
-                extractor.disableScissor();
+                    float textY = ry + (rowH - listFont.lineHeight()) / 2f;
+                    float nameX = rowX + textPad;
+                    listFont.drawString(extractor, m.getName(), nameX, textY, M3.PRIMARY);
+                    if (!suffix.isEmpty()) {
+                        listFont.drawString(extractor, suffix, nameX + nameW + suffixGap,
+                                textY, M3.ON_SURFACE_VARIANT);
+                    }
+                } finally {
+                    extractor.disableScissor();
+                }
 
                 yOffset += bandThis;
             }
         }
+    }
+
+    private float renderedWidth(Module module) {
+        float width = listFont.width(module.getName());
+        String suffix = module.getSuffix();
+        return suffix == null || suffix.isEmpty() ? width : width + 1f + listFont.width(suffix);
     }
 
     private void renderMusicWidget(GuiGraphicsExtractor g) {

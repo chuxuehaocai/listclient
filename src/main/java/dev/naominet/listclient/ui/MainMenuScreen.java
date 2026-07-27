@@ -258,7 +258,7 @@ public class MainMenuScreen extends TitleScreen {
         }
 
         M3.roundRect(g, e.x, e.y, e.w, e.h, M3.pill(e.h), faded(container));
-        Ripple.draw(g, e, e.x, e.y, e.w, e.h, onColor);
+        Ripple.draw(g, e, e.x, e.y, e.w, e.h, M3.pill(e.h), faded(onColor));
         if (keyboardFocus && enabled) {
             M3.focusRing(g, e.x, e.y, e.w, e.h, M3.pill(e.h));
         }
@@ -299,7 +299,7 @@ public class MainMenuScreen extends TitleScreen {
                 M3.roundRect(g, e.x, e.y, size, size, M3.pill(size),
                         faded(M3.stateLayer(M3.ON_SURFACE, (int) (M3.STATE_HOVER * t))));
             }
-            Ripple.draw(g, e, e.x, e.y, size, size, M3.ON_SURFACE);
+            Ripple.draw(g, e, e.x, e.y, size, size, M3.pill(size), faded(M3.ON_SURFACE));
             int c = enabled ? M3.lerp(M3.ON_SURFACE_VARIANT, M3.ON_SURFACE, t)
                     : M3.withAlpha(M3.ON_SURFACE, M3.DISABLED_CONTENT);
             Icons.drawCentered(g, e.icon, 10, e.x + size / 2f, e.y + size / 2f, faded(c));
@@ -354,6 +354,7 @@ public class MainMenuScreen extends TitleScreen {
         int bg = M3.layered(M3.SURFACE_CONTAINER_HIGH, M3.ON_SURFACE, (int) (M3.STATE_HOVER * t));
         M3.shadow(g, x, y, w, h, M3.SHAPE_M);
         M3.roundRect(g, x, y, w, h, M3.SHAPE_M, faded(bg));
+        Ripple.draw(g, "now-playing", x, y, w, h, M3.SHAPE_M, faded(M3.ON_SURFACE));
 
         var audio = mp.audio;
         Icons.drawCentered(g, audio.isPlaying() ? Icons.MUSIC_NOTE : Icons.PAUSE, 9,
@@ -401,6 +402,7 @@ public class MainMenuScreen extends TitleScreen {
         }
         if (nowPlayingW > 0 && mx >= nowPlayingX && mx <= nowPlayingX + nowPlayingW
                 && my >= nowPlayingY && my <= nowPlayingY + nowPlayingH) {
+            Ripple.press("now-playing", mx, my);
             openMusic();
             return true;
         }
@@ -411,7 +413,9 @@ public class MainMenuScreen extends TitleScreen {
         if (!e.enabled.getAsBoolean()) {
             return;
         }
-        Ripple.press(e, this.mouseX, this.mouseY);
+        float px = isOver(e.x, e.y, e.w, e.h) ? this.mouseX : e.x + e.w / 2f;
+        float py = isOver(e.x, e.y, e.w, e.h) ? this.mouseY : e.y + e.h / 2f;
+        Ripple.press(e, px, py);
         this.minecraft.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
         e.action.run();
     }

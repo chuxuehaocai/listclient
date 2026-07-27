@@ -35,6 +35,7 @@ public final class Ripple {
 
     /** Record a ripple originating at (clickX, clickY) for this component. */
     public static void press(Object key, float clickX, float clickY) {
+        sweep();
         ACTIVE.put(key, new R(clickX, clickY, Util.getMillis()));
     }
 
@@ -44,6 +45,12 @@ public final class Ripple {
      * uses it at a fading state-layer alpha.
      */
     public static void draw(GuiGraphicsExtractor g, Object key, int x, int y, int w, int h, int onColor) {
+        draw(g, key, x, y, w, h, Math.min(w, h) / 2, onColor);
+    }
+
+    /** Draw a ripple with a rounded-rectangle clip matching the component. */
+    public static void draw(GuiGraphicsExtractor g, Object key, int x, int y, int w, int h,
+                            int radius, int onColor) {
         R r = ACTIVE.get(key);
         if (r == null) return;
         float t = (Util.getMillis() - r.start) / (float) DURATION;
@@ -61,9 +68,12 @@ public final class Ripple {
         int col = (onColor & 0x00FFFFFF) | (alpha << 24);
 
         g.enableScissor(x, y, x + w, y + h);
-        int d = Math.max(1, Math.round(rad * 2));
-        M3.roundRect(g, Math.round(r.px - rad), Math.round(r.py - rad), d, d, d / 2, col);
-        g.disableScissor();
+        try {
+            int d = Math.max(1, Math.round(rad * 2));
+            M3.roundRect(g, Math.round(r.px - rad), Math.round(r.py - rad), d, d, d / 2, col);
+        } finally {
+            g.disableScissor();
+        }
     }
 
     /** Drop expired ripples (optional housekeeping; draw() already self-expires). */

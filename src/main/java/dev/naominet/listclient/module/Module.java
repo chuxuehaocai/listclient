@@ -106,7 +106,10 @@ public class Module implements ConfigWriter {
     }
 
     public void setSuffix(String suffix) {
-        this.suffix = suffix;
+        if (!java.util.Objects.equals(this.suffix, suffix)) {
+            this.suffix = suffix;
+            Interface.sortedModuleListNeedUpdata = true;
+        }
     }
 
     public double getHeight() {

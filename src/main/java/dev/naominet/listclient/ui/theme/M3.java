@@ -169,6 +169,67 @@ public final class M3 {
     }
 
     /**
+     * M3 expressive determinate progress indicator. The inactive track uses the
+     * highest surface-container role; the primary indicator travels as a clipped
+     * sine band, with {@code phase} supplied from monotonic render time.
+     */
+    public static float wavePhase() {
+        double radians = net.minecraft.util.Util.getMillis() * 0.008;
+        return (float) (radians % (Math.PI * 2.0));
+    }
+
+    public static void wavyProgress(GuiGraphicsExtractor g, int x, int y, int w, int h,
+                                    float progress) {
+        if (w <= 0 || h <= 0 || progress <= 0f) return;
+        g.enableScissor(x, y, x + w, y + h);
+        try {
+            GlShapes.wavyBand(g, x, y, w, h, progress, wavePhase(), PRIMARY);
+        } finally {
+            g.disableScissor();
+        }
+    }
+
+    /**
+     * Album-tinted animated lyric backdrop. The moving translucent fields are
+     * submitted through the GPU GUI pipeline; the shader variant can replace
+     * this method without changing either lyric surface.
+     */
+    public static void lyricBackground(GuiGraphicsExtractor g, int x, int y, int w, int h) {
+        roundRect(g, x, y, w, h, SHAPE_M, withAlpha(SURFACE_CONTAINER_LOW, 0xF4));
+        double time = net.minecraft.util.Util.getMillis() / 1000.0;
+        float breathe = 0.96f + (float) Math.sin(time * 0.22) * 0.035f;
+        float driftX = (float) (Math.sin(time * 0.115) + Math.sin(time * 0.043 + 1.7))
+                * w * 0.026f;
+        float driftY = (float) (Math.cos(time * 0.097 + 0.8) + Math.sin(time * 0.037))
+                * h * 0.022f;
+        float glowW = Math.max(32f, w * 0.72f) * breathe;
+        float glowH = Math.max(24f, h * 0.78f) * breathe;
+        g.enableScissor(x, y, x + w, y + h);
+        try {
+            GlShapes.radialGlow(g,
+                    x - glowW * 0.28f + driftX,
+                    y - glowH * 0.34f + driftY,
+                    glowW, glowH, withAlpha(PRIMARY_CONTAINER, 0x58));
+            GlShapes.radialGlow(g,
+                    x + w - glowW * 0.68f - driftX * 0.72f,
+                    y + h - glowH * 0.72f - driftY * 0.8f,
+                    glowW * 0.92f, glowH * 0.94f, withAlpha(TERTIARY, 0x34));
+            GlShapes.radialGlow(g,
+                    x + w * 0.17f - driftX * 0.38f,
+                    y + h * 0.25f + driftY * 0.45f,
+                    glowW * 0.86f, glowH * 0.84f,
+                    withAlpha(SECONDARY_CONTAINER, 0x40));
+            GlShapes.radialGlow(g,
+                    x + w * 0.32f + driftX * 0.25f,
+                    y + h * 0.10f - driftY * 0.2f,
+                    glowW * 0.55f, glowH * 0.52f,
+                    withAlpha(SURFACE_CONTAINER_HIGHEST, 0x28));
+        } finally {
+            g.disableScissor();
+        }
+    }
+
+    /**
      * Rounded rectangle with per-corner control – for surfaces that meet a
      * square edge (e.g. a header rounded only on top). Corners with
      * {@code false} stay square.

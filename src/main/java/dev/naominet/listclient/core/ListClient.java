@@ -22,6 +22,7 @@ public class ListClient {
     //Invoke when minecraft start
     public void start(){
         ModuleManager.instance.initialize();
+        FileManager.instance.read();
         CommandManager.instance.initialize();
         EventManager.instance.register(this);
 

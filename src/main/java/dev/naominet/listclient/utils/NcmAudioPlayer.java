@@ -247,8 +247,12 @@ public final class NcmAudioPlayer {
 
     public void seekRatio(float ratio) {
         ratio = Math.max(0f, Math.min(1f, ratio));
+        seekMs((long) (durationMs * ratio));
+    }
+
+    public void seekMs(long targetMs) {
         synchronized (lock) {
-            long target = (long) (durationMs * ratio);
+            long target = Math.max(0L, durationMs > 0 ? Math.min(durationMs, targetMs) : targetMs);
             if (virtualMode) {
                 virtualOffsetMs = target;
                 virtualStartedAt = System.currentTimeMillis();

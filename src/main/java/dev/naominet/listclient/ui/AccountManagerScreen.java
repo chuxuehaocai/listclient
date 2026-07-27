@@ -235,10 +235,16 @@ public class AccountManagerScreen extends Screen {
             int dx = cardX + cardW - 17;
             int dy = cursor + (ROW_H - 3 - 12) / 2;
             boolean dHover = isOver(dx, dy, 12, 12) && mouseY >= zClipY0 && mouseY <= zClipY1;
+            Object deleteKey = "delete:" + account.uuid();
+            Ripple.draw(g, deleteKey, dx - 2, dy - 2, 16, 16,
+                    active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE_VARIANT);
             Icons.drawCentered(g, Icons.CLOSE, 8, dx + 6, dy + 6,
                     dHover ? M3.ERROR : (active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE_VARIANT));
             Account a = account;
-            addZone(dx - 2, dy - 2, 16, 16, () -> AccountManager.instance.remove(a));
+            addZone(dx - 2, dy - 2, 16, 16, () -> {
+                Ripple.press(deleteKey, mouseX, mouseY);
+                AccountManager.instance.remove(a);
+            });
 
             cursor += ROW_H;
         }
@@ -340,9 +346,11 @@ public class AccountManagerScreen extends Screen {
         float ht = animTo("mscopy", hover ? 1f : 0f, 12f);
         int bg = M3.layered(M3.SECONDARY_CONTAINER, M3.ON_SECONDARY_CONTAINER, (int) (M3.STATE_HOVER * ht));
         M3.roundRect(g, bx, by, bw, BTN_H, M3.pill(BTN_H), bg);
+        Ripple.draw(g, "mscopy", bx, by, bw, BTN_H, M3.ON_SECONDARY_CONTAINER);
         smallFont.drawCenteredString(g, label, mid,
                 by + (BTN_H - smallFont.lineHeight()) / 2f, M3.ON_SECONDARY_CONTAINER);
         addZone(bx, by, bw, BTN_H, () -> {
+            Ripple.press("mscopy", mouseX, mouseY);
             if (msUserCode != null) {
                 MicrosoftAuth.copyToClipboard(msUserCode);
                 copiedAt = Util.getMillis();
@@ -358,9 +366,14 @@ public class AccountManagerScreen extends Screen {
             M3.roundRect(g, x, y, 14, 14, M3.pill(14),
                     M3.stateLayer(M3.ON_SURFACE, (int) (M3.STATE_HOVER * t)));
         }
+        Object rippleKey = "ib:" + key;
+        Ripple.draw(g, rippleKey, x, y, 14, 14, M3.ON_SURFACE);
         Icons.drawCentered(g, icon, 9, x + 7, y + 7,
                 M3.lerp(M3.ON_SURFACE_VARIANT, M3.ON_SURFACE, t));
-        addZone(x, y, 14, 14, action);
+        addZone(x, y, 14, 14, () -> {
+            Ripple.press(rippleKey, mouseX, mouseY);
+            action.run();
+        });
     }
 
     /* ================================================================== */

@@ -7,6 +7,7 @@ import dev.naominet.listclient.ncmApi.NcmSong;
 import dev.naominet.listclient.ui.theme.Icons;
 import dev.naominet.listclient.ui.theme.M3;
 import dev.naominet.listclient.ui.theme.MonetTheme;
+import dev.naominet.listclient.ui.theme.Ripple;
 import dev.naominet.listclient.utils.AnimationUtils;
 import dev.naominet.listclient.utils.Lang;
 import dev.naominet.listclient.utils.RenderUtils;
@@ -122,6 +123,7 @@ public class MusicPlayerScreen extends Screen {
         // timed. Exponential ease – fast start, smooth deceleration.
         mp.homeScroll = AnimationUtils.easeExp(mp.homeScroll, mp.homeScrollTarget, 12f);
         mp.listScroll = AnimationUtils.easeExp(mp.listScroll, mp.listScrollTarget, 12f);
+        updateLyricMotion();
 
         // Page-switch slide: restart the ease whenever the page changes.
         if (mp.page != lastPage) {
@@ -238,8 +240,11 @@ public class MusicPlayerScreen extends Screen {
         int userColor = mp.user != null && mp.user.loggedIn
                 ? M3.PRIMARY
                 : (userHover ? M3.ON_SURFACE : M3.ON_SURFACE_VARIANT);
+        int userX = rightTextX - 2;
+        int userW = rw + avatarSize + 10;
+        Ripple.draw(g, "header_user", userX, y, userW, HEADER_H, M3.ON_SURFACE);
         labelFont.drawString(g, right, rightTextX, y + (HEADER_H - labelFont.lineHeight()) / 2f, userColor);
-        addClick(rightTextX - 2, y, rw + avatarSize + 10, HEADER_H, "header_user");
+        addClick(userX, y, userW, HEADER_H, "header_user");
 
         if (mp.statusText != null && !mp.statusText.isEmpty()) {
             smallFont.drawString(g, MusicPlayer.ellipsize(mp.statusText, 14), x + 74,
@@ -252,7 +257,7 @@ public class MusicPlayerScreen extends Screen {
 
     private void drawSidebar(GuiGraphicsExtractor g, int x, int y) {
         int top = y + HEADER_H + 4;
-        Page[] items = {Page.HOME, Page.SEARCH, Page.MINE, Page.FM, Page.LOGIN};
+        Page[] items = {Page.HOME, Page.SEARCH, Page.MINE, Page.FM, Page.LYRICS, Page.LOGIN};
         for (int i = 0; i < items.length; i++) {
             Page p = items[i];
             int iy = top + i * 22;
@@ -265,6 +270,8 @@ public class MusicPlayerScreen extends Screen {
                 M3.roundRect(g, x + 2, iy - 2, SIDEBAR_W - 4, 18, M3.pill(18),
                         M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
             }
+            Ripple.draw(g, "nav:" + p.name(), x + 2, iy - 2, SIDEBAR_W - 4, 18,
+                    active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE);
             int color = active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE_VARIANT;
             String icon = navIcon(p);
             int iconSize = 9;
@@ -287,6 +294,7 @@ public class MusicPlayerScreen extends Screen {
             case SEARCH -> Icons.SEARCH;
             case MINE -> Icons.PERSON;
             case FM -> Icons.RADIO;
+            case LYRICS -> Icons.QUEUE_MUSIC;
             case LOGIN -> Icons.QR_CODE;
             default -> Icons.MUSIC_NOTE;
         };
@@ -310,10 +318,102 @@ public class MusicPlayerScreen extends Screen {
                 case MINE -> drawMine(g, sx, py, pw, ph);
                 case FM -> drawFm(g, sx, py, pw, ph);
                 case PLAYLIST -> drawPlaylistDetail(g, sx, py, pw, ph);
+                case LYRICS -> drawLyrics(g, px, py, pw, ph);
                 case LOGIN -> drawLogin(g, sx, py, pw, ph);
             }
         } finally {
             g.disableScissor();
+        }
+    }
+
+    private void updateLyricMotion() {
+        int active = mp.currentLyricIndex();
+        if (active < 0) return;
+        long now = Util.getMillis();
+        if (!mp.lyricsFollowPlayback && now - mp.lyricsManualAt > 3500L) {
+            mp.lyricsFollowPlayback = true;
+        }
+        float target = active * 22f;
+        if (!mp.lyricsFollowPlayback) {
+            mp.lyricMotionAt = now;
+            return;
+        }
+        float dt = mp.lyricMotionAt == 0L ? 1f / 60f
+                : Math.min(0.05f, Math.max(0.001f, (now - mp.lyricMotionAt) / 1000f));
+        mp.lyricMotionAt = now;
+        float displacement = target - mp.lyricScroll;
+        mp.lyricScrollVelocity += displacement * 105f * dt;
+        mp.lyricScrollVelocity *= (float) Math.exp(-14f * dt);
+        mp.lyricScroll += mp.lyricScrollVelocity * dt;
+        if (Math.abs(displacement) < 0.02f && Math.abs(mp.lyricScrollVelocity) < 0.02f) {
+            mp.lyricScroll = target;
+            mp.lyricScrollVelocity = 0f;
+        }
+    }
+
+    private void drawLyrics(GuiGraphicsExtractor g, int x, int y, int w, int h) {
+        M3.lyricBackground(g, x, y, w, h);
+        int backX = x + 7;
+        int backY = y + 6;
+        boolean backHover = isMouseOver(backX, backY, 34, 14);
+        if (backHover) {
+            M3.roundRect(g, backX, backY, 34, 14, M3.pill(14),
+                    M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
+        }
+        Ripple.draw(g, "lyrics_back", backX, backY, 34, 14, M3.ON_SURFACE);
+        Icons.drawCentered(g, Icons.ARROW_BACK, 8, backX + 8, backY + 7, M3.ON_SURFACE);
+        smallFont.drawString(g, Lang.tr("music.back"), backX + 14,
+                backY + (14 - smallFont.lineHeight()) / 2f, M3.ON_SURFACE);
+        addClick(backX, backY, 34, 14, "lyrics_back");
+        int active = mp.currentLyricIndex();
+        if (mp.currentSong == null) {
+            bodyFont.drawCenteredString(g, Lang.tr("music.not_playing"), x + w / 2f,
+                    y + h / 2f - bodyFont.lineHeight() / 2f, M3.ON_SURFACE_VARIANT);
+            return;
+        }
+        if (mp.lyricsLoading) {
+            bodyFont.drawCenteredString(g, Lang.tr("music.lyrics_loading"), x + w / 2f,
+                    y + h / 2f - bodyFont.lineHeight() / 2f, M3.ON_SURFACE_VARIANT);
+            return;
+        }
+        if (mp.lyrics == null || mp.lyrics.isEmpty()) {
+            bodyFont.drawCenteredString(g, mp.lyricsError.isEmpty() ? Lang.tr("music.lyrics_empty") : mp.lyricsError,
+                    x + w / 2f, y + h / 2f - bodyFont.lineHeight() / 2f, M3.ON_SURFACE_VARIANT);
+            return;
+        }
+
+        float centerY = y + h * 0.46f;
+        for (int i = 0; i < mp.lyrics.size(); i++) {
+            float lineY = centerY + i * 22f - mp.lyricScroll;
+            if (lineY < y - 24 || lineY > y + h + 12) continue;
+            float distance = Math.abs(i - active);
+            float focus = Math.max(0f, 1f - distance / 4f);
+            float scale = i == active ? 1.08f : 0.92f + focus * 0.06f;
+            int alpha = i == active ? 255 : Math.max(32, (int) (150 * focus));
+            int color = i == active ? M3.ON_SURFACE : M3.withAlpha(M3.ON_SURFACE_VARIANT, alpha);
+            String text = trimToWidth(i == active ? titleFont : bodyFont, mp.lyrics.get(i).text, w - 28);
+            TTFFontRenderer font = i == active ? titleFont : bodyFont;
+            float textX = x + 12 + (1f - focus) * 5f;
+            int rowY = (int) lineY - 9;
+            String lyricKey = "lyric:" + i;
+            if (isMouseOver(x + 6, rowY, w - 12, 18)) {
+                M3.roundRect(g, x + 6, rowY, w - 12, 18, M3.SHAPE_S,
+                        M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
+            }
+            Ripple.draw(g, lyricKey, x + 6, rowY, w - 12, 18, M3.SHAPE_S, M3.ON_SURFACE);
+            g.pose().pushMatrix();
+            g.pose().translate(textX, lineY);
+            g.pose().scale(scale, scale);
+            font.drawString(g, text, 0, -font.lineHeight() / 2f, color);
+            g.pose().popMatrix();
+            addClick(x + 6, rowY, w - 12, 18, lyricKey);
+        }
+
+        int fadeH = 18;
+        for (int i = 0; i < fadeH; i++) {
+            int a = (int) (150f * (1f - i / (float) fadeH));
+            fill(g, x, y + i, w, 1, M3.withAlpha(M3.SURFACE_CONTAINER_LOW, a));
+            fill(g, x, y + h - 1 - i, w, 1, M3.withAlpha(M3.SURFACE_CONTAINER_LOW, a));
         }
     }
 
@@ -383,6 +483,8 @@ public class MusicPlayerScreen extends Screen {
                     M3.roundRect(g, x + PAD, rowY - 1, w - PAD * 2, rowH, M3.SHAPE_XS,
                             M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
                 }
+                Ripple.draw(g, "play_song:" + prefix + ":" + i,
+                        x + PAD, rowY - 1, w - PAD * 2, rowH, M3.SHAPE_XS, M3.ON_SURFACE);
                 smallFont.drawString(g, String.valueOf(i + 1), x + PAD + 2,
                         rowY + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
                 Identifier cover = mp.ensureImage(s.coverUrl, prefix + "_c_" + s.id);
@@ -429,6 +531,8 @@ public class MusicPlayerScreen extends Screen {
                         ? M3.layered(M3.SURFACE_CONTAINER_HIGH, M3.ON_SURFACE, M3.STATE_HOVER)
                         : M3.SURFACE_CONTAINER_HIGH;
                 M3.roundRect(g, cx, cy, cardW, cardH, M3.SHAPE_M, bg);
+                Ripple.draw(g, "open_pl:" + prefix + ":" + i,
+                        cx, cy, cardW, cardH, M3.SHAPE_M, M3.ON_SURFACE);
                 Identifier cover = mp.ensureImage(pl.coverUrl, prefix + "_pl_" + pl.id);
                 if (cover != null) blit(g, cover, cx + 3, cy + 3, cardW - 6, cardW - 6);
                 else fill(g, cx + 3, cy + 3, cardW - 6, cardW - 6, M3.SURFACE_CONTAINER_HIGHEST);
@@ -484,6 +588,8 @@ public class MusicPlayerScreen extends Screen {
                 M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.SHAPE_XS,
                         M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
             }
+            Ripple.draw(g, "play_song:search:" + i, x + PAD, ry, w - PAD * 2, rowH,
+                    M3.SHAPE_XS, M3.ON_SURFACE);
             smallFont.drawString(g, String.valueOf(i + 1), x + PAD + 2,
                     ry + (rowH - smallFont.lineHeight()) / 2f, M3.ON_SURFACE_VARIANT);
             Identifier cover = mp.ensureImage(s.coverUrl, "search_c_" + s.id);
@@ -546,6 +652,8 @@ public class MusicPlayerScreen extends Screen {
                 M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.SHAPE_XS,
                         M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
             }
+            Ripple.draw(g, "open_pl:mine:" + i, x + PAD, ry, w - PAD * 2, rowH,
+                    M3.SHAPE_XS, M3.ON_SURFACE);
             Identifier cover = mp.ensureImage(pl.coverUrl, "mine_pl_" + pl.id);
             if (cover != null) blit(g, cover, x + PAD + 2, ry + 1, 14, 14);
             else fill(g, x + PAD + 2, ry + 1, 14, 14, M3.SURFACE_CONTAINER_HIGH);
@@ -593,6 +701,8 @@ public class MusicPlayerScreen extends Screen {
                 M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.pill(rowH),
                         M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
             }
+            Ripple.draw(g, "play_song:fm:" + i, x + PAD, ry, w - PAD * 2, rowH,
+                    M3.pill(rowH), active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE);
             bodyFont.drawString(g, MusicPlayer.ellipsize(s.titleLine(), 28), x + PAD + 4,
                     ry + (rowH - bodyFont.lineHeight()) / 2f,
                     active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE);
@@ -608,6 +718,7 @@ public class MusicPlayerScreen extends Screen {
             M3.roundRect(g, x + PAD, y + 4, 28, 12, M3.pill(12),
                     M3.stateLayer(M3.PRIMARY, M3.STATE_HOVER));
         }
+        Ripple.draw(g, "pl_back", x + PAD, y + 4, 28, 12, M3.PRIMARY);
         Icons.draw(g, Icons.ARROW_BACK, 8, x + PAD + 2, y + 4 + (12 - 8) / 2f, M3.PRIMARY);
         smallFont.drawString(g, Lang.tr("music.back"), x + PAD + 2 + Icons.width(Icons.ARROW_BACK, 8) + 2,
                 y + 4 + (12 - smallFont.lineHeight()) / 2f, M3.PRIMARY);
@@ -661,6 +772,8 @@ public class MusicPlayerScreen extends Screen {
                     M3.roundRect(g, x + PAD, ry, w - PAD * 2, rowH, M3.pill(rowH),
                             M3.stateLayer(M3.ON_SURFACE, M3.STATE_HOVER));
                 }
+                Ripple.draw(g, "play_song:pl:" + i, x + PAD, ry, w - PAD * 2, rowH,
+                        M3.pill(rowH), active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE);
                 // Tonal pairing: every label on the secondary-container pill
                 // uses its on-color, not just the song name.
                 int metaColor = active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE_VARIANT;
@@ -787,14 +900,10 @@ public class MusicPlayerScreen extends Screen {
         drawBtn(g, midX + 18, btnY, 14, 12, Icons.SKIP_NEXT, "next");
 
         int barW = PANEL_W - 180;
-        int barY = py + 23;
-        int barH = 4;
-        // Linear progress: primary indicator on surface-container-highest track.
-        fill(g, barX, barY, barW, barH, M3.SURFACE_CONTAINER_HIGHEST);
+        int barY = py + 22;
+        int barH = 6;
         float prog = mp.audio.progress();
-        int filled = (int) (barW * prog);
-        if (filled > 0) fill(g, barX, barY, filled, barH, M3.PRIMARY);
-        M3.roundRect(g, barX + Math.max(0, filled - 1), barY - 2, 4, barH + 4, 2, M3.PRIMARY);
+        M3.wavyProgress(g, barX, barY, barW, barH, prog);
         addClick(barX - 2, barY - 4, barW + 4, barH + 8, "seek");
 
         String tLeft = MusicPlayer.formatMs(mp.audio.positionMs());
@@ -812,6 +921,7 @@ public class MusicPlayerScreen extends Screen {
 
         int mx = px + PANEL_W - 48;
         String modeIcon = mp.repeatOne ? Icons.REPEAT_ONE : (mp.shuffle ? Icons.SHUFFLE : Icons.REPEAT);
+        Ripple.draw(g, "mode", mx, py + 18, 24, 12, M3.ON_SURFACE);
         Icons.draw(g, modeIcon, 9, mx, py + 19,
                 isMouseOver(mx, py + 18, 24, 12) ? M3.ON_SURFACE : M3.ON_SURFACE_VARIANT);
         addClick(mx, py + 18, 24, 12, "mode");
@@ -828,6 +938,7 @@ public class MusicPlayerScreen extends Screen {
                 ? M3.layered(M3.SECONDARY_CONTAINER, M3.ON_SECONDARY_CONTAINER, M3.STATE_HOVER)
                 : M3.SECONDARY_CONTAINER;
         M3.roundRect(g, x, y, w, h, M3.pill(h), bg);
+        Ripple.draw(g, id, x, y, w, h, M3.ON_SECONDARY_CONTAINER);
         Icons.drawCentered(g, icon, 9, x + w / 2f, y + h / 2f, M3.ON_SECONDARY_CONTAINER);
         addClick(x, y, w, h, id);
     }
@@ -838,6 +949,7 @@ public class MusicPlayerScreen extends Screen {
         boolean hover = isMouseOver(x, y, w, h);
         int bg = hover ? M3.layered(container, onColor, M3.STATE_HOVER) : container;
         M3.roundRect(g, x, y, w, h, M3.pill(h), bg);
+        Ripple.draw(g, id, x, y, w, h, onColor);
         labelFont.drawCenteredString(g, label, x + w / 2f,
                 y + (h - labelFont.lineHeight()) / 2f, onColor);
         addClick(x, y, w, h, id);
@@ -887,6 +999,10 @@ public class MusicPlayerScreen extends Screen {
             return true;
         }
 
+        if (isButtonAction(hit.id) || hit.id.startsWith("play_song:")
+                || hit.id.startsWith("open_pl:") || hit.id.startsWith("lyric:")) {
+            Ripple.press(hit.id, mx, my);
+        }
         mp.dispatchAction(hit.id, mx, panelX);
         return true;
     }
@@ -936,6 +1052,14 @@ public class MusicPlayerScreen extends Screen {
         }
         if (mp.page == Page.PLAYLIST) {
             mp.listScrollTarget = Math.max(0, mp.listScrollTarget + delta);
+            return true;
+        }
+        if (mp.page == Page.LYRICS) {
+            mp.lyricsFollowPlayback = false;
+            mp.lyricsManualAt = Util.getMillis();
+            float maxScroll = Math.max(0f, (mp.lyrics.size() - 1) * 22f);
+            mp.lyricScroll = Math.max(0f, Math.min(maxScroll, mp.lyricScroll + delta));
+            mp.lyricScrollVelocity = 0f;
             return true;
         }
         return false;
@@ -1012,6 +1136,14 @@ public class MusicPlayerScreen extends Screen {
     /* ================================================================== */
     /*  helpers                                                           */
     /* ================================================================== */
+
+    private static boolean isButtonAction(String id) {
+        return id != null && (id.startsWith("nav:")
+                || id.equals("header_user") || id.equals("qr_refresh") || id.equals("logout")
+                || id.equals("toggle") || id.equals("prev") || id.equals("next") || id.equals("mode")
+                || id.equals("search_go") || id.equals("fm_refresh") || id.equals("pl_back")
+                || id.equals("pl_play_all") || id.equals("pl_load_more") || id.equals("lyrics_back"));
+    }
 
     private boolean isInsidePanel(int mx, int my) {
         return mx >= panelX && mx <= panelX + PANEL_W && my >= panelY && my <= panelY + PANEL_H;
