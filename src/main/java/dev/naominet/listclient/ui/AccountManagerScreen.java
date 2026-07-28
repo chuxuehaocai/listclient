@@ -4,6 +4,7 @@ import com.mojang.authlib.GameProfile;
 import dev.naominet.listclient.auth.MicrosoftAuth;
 import dev.naominet.listclient.manager.AccountManager;
 import dev.naominet.listclient.manager.AccountManager.Account;
+import dev.naominet.listclient.ui.notification.NotificationManager;
 import dev.naominet.listclient.ui.theme.Icons;
 import dev.naominet.listclient.ui.theme.M3;
 import dev.naominet.listclient.ui.theme.MonetTheme;
@@ -34,9 +35,9 @@ import java.util.function.Supplier;
  * Lists the stored accounts (offline and Microsoft) as cards with a type
  * chip, switches the running session on click via
  * {@link AccountManager#switchTo}, adds offline accounts through an outlined
- * text field + filled button and Microsoft accounts through the OAuth
- * device-code flow ({@link MicrosoftAuth}) with an in-panel user-code
- * overlay. Same immediate-mode patterns, i18n and motion (scale-in open,
+ * text field + filled button and Microsoft accounts through the browser OAuth
+ * flow ({@link MicrosoftAuth}) with an in-panel callback status overlay. Same
+ * immediate-mode patterns, i18n and motion (scale-in open,
  * non-linear hovers) as the rest of the client UI.
  */
 public class AccountManagerScreen extends Screen {
@@ -63,12 +64,10 @@ public class AccountManagerScreen extends Screen {
     private float scroll;
     private float scrollTarget;
 
-    // Microsoft device-code flow state (all mutated on the render thread).
+    // Microsoft browser-OAuth state (all mutated on the render thread).
     private MicrosoftAuth msAuth;
     private boolean msPending;
     private String msUserCode;
-    private String msVerifyUri;
-    private long copiedAt;
 
     private int mouseX;
     private int mouseY;
@@ -102,6 +101,14 @@ public class AccountManagerScreen extends Screen {
     /*  render                                                            */
     /* ================================================================== */
 
+    /** The manually rendered parent owns the frame's single blur pass. */
+    @Override
+    public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
+        if (parent == null) {
+            super.extractBackground(g, mouseX, mouseY, delta);
+        }
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
         MonetTheme.update();
@@ -116,9 +123,8 @@ public class AccountManagerScreen extends Screen {
             parent.extractRenderState(g, -1, -1, delta);
         } else {
             extractTransparentBackground(g);
+            M3.blurBehind(g);
         }
-        // Frosted backdrop: blur whatever is behind, then a scrim on top.
-        M3.blurBehind(g);
         g.fill(0, 0, this.width, this.height, M3.withAlpha(M3.SCRIM, 0x66));
 
         float open = AnimationUtils.easeOutCubic((Util.getMillis() - openedAt) / 250f);
@@ -177,7 +183,9 @@ public class AccountManagerScreen extends Screen {
 
     private void drawAccounts(GuiGraphicsExtractor g, int x, int listY, int listH) {
         List<Account> accounts = AccountManager.instance.getAccounts();
-        String current = AccountManager.instance.currentName();
+        // Bind selection to one stored record, never to a display name or each
+        // row's independently evaluated session match.
+        Account current = AccountManager.instance.currentAccount();
 
         int cursor = listY + 2 - (int) scroll;
         int cardX = x + PAD;
@@ -188,33 +196,36 @@ public class AccountManagerScreen extends Screen {
                     listY + 26, M3.ON_SURFACE_VARIANT);
         }
 
-        for (Account account : accounts) {
-            boolean active = account.name().equals(current);
+        for (int accountIndex = 0; accountIndex < accounts.size(); accountIndex++) {
+            Account account = accounts.get(accountIndex);
+            boolean active = account == current;
             boolean ms = account.microsoft();
-            String key = account.type() + ":" + account.uuid();
+            // Index makes duplicate persisted records independent interaction targets.
+            Object rowKey = "account:" + accountIndex + ":" + account.type() + ":" + account.uuid();
             boolean hover = isOver(cardX, cursor, cardW, ROW_H - 3)
                     && mouseY >= zClipY0 && mouseY <= zClipY1;
-            float ht = animTo("h:" + key, hover ? 1f : 0f, 12f);
+            float ht = animTo("h:" + rowKey, hover ? 1f : 0f, 12f);
 
             int bg = active ? M3.SECONDARY_CONTAINER
                     : M3.layered(M3.SURFACE_CONTAINER_HIGH, M3.ON_SURFACE, (int) (M3.STATE_HOVER * ht));
             M3.roundRect(g, cardX, cursor, cardW, ROW_H - 3, M3.SHAPE_M, bg);
 
             int onColor = active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE;
-            Ripple.draw(g, account, cardX, cursor, cardW, ROW_H - 3, onColor);
+            Ripple.draw(g, rowKey, cardX, cursor, cardW, ROW_H - 3, onColor);
             PlayerSkin skin = skinFor(account).get();
             if (skin != null) {
                 PlayerFaceExtractor.extractRenderState(g, skin, cardX + 5, cursor + (ROW_H - 3 - 14) / 2, 14);
             }
             bodyFont.drawString(g, account.name(), cardX + 25, cursor + 3f, onColor);
 
-            // type chip: icon + label after the name
+            // The supporting line keeps same-name records distinguishable.
             int chipColor = active ? M3.ON_SECONDARY_CONTAINER
                     : (ms ? M3.PRIMARY : M3.ON_SURFACE_VARIANT);
             String typeIcon = ms ? Icons.CLOUD : Icons.PERSON;
             Icons.draw(g, typeIcon, 7, cardX + 25, cursor + 13, chipColor);
-            smallFont.drawString(g, Lang.tr(ms ? "acct.type_ms" : "acct.type_offline"),
-                    cardX + 25 + 9, cursor + 13f, chipColor);
+            String identity = Lang.tr(ms ? "acct.type_ms" : "acct.type_offline")
+                    + " · " + shortId(account.uuid());
+            smallFont.drawString(g, identity, cardX + 25 + 9, cursor + 13f, chipColor);
 
             if (active) {
                 Icons.drawCentered(g, Icons.CHECK, 9, cardX + cardW - 34, cursor + (ROW_H - 3) / 2f,
@@ -225,9 +236,16 @@ public class AccountManagerScreen extends Screen {
             } else {
                 Account a = account;
                 addZone(cardX, cursor, cardW - 22, ROW_H - 3, () -> {
-                    Ripple.press(a, mouseX, mouseY);
-                    AccountManager.instance.switchTo(a);
+                    Ripple.press(rowKey, mouseX, mouseY);
                     error = "";
+                    AccountManager.instance.login(a, loggedIn -> {
+                        skins.remove(a.uuid());
+                        NotificationManager.instance.success(
+                                Lang.tr("acct.login_success", loggedIn.name()));
+                    }, message -> {
+                        error = Lang.tr("acct.ms_failed", message);
+                        NotificationManager.instance.error(error);
+                    });
                 });
             }
 
@@ -235,7 +253,7 @@ public class AccountManagerScreen extends Screen {
             int dx = cardX + cardW - 17;
             int dy = cursor + (ROW_H - 3 - 12) / 2;
             boolean dHover = isOver(dx, dy, 12, 12) && mouseY >= zClipY0 && mouseY <= zClipY1;
-            Object deleteKey = "delete:" + account.uuid();
+            Object deleteKey = "delete:" + rowKey;
             Ripple.draw(g, deleteKey, dx - 2, dy - 2, 16, 16,
                     active ? M3.ON_SECONDARY_CONTAINER : M3.ON_SURFACE_VARIANT);
             Icons.drawCentered(g, Icons.CLOSE, 8, dx + 6, dy + 6,
@@ -251,6 +269,12 @@ public class AccountManagerScreen extends Screen {
 
         int contentH = accounts.size() * ROW_H + 4;
         scrollTarget = Math.max(0, Math.min(scrollTarget, Math.max(0, contentH - listH)));
+    }
+
+    private static String shortId(String uuid) {
+        if (uuid == null || uuid.isBlank()) return "--------";
+        String compact = uuid.replace("-", "");
+        return compact.length() <= 8 ? compact : compact.substring(0, 8);
     }
 
     /** Full-width filled "Microsoft Login" button above the offline add row. */
@@ -303,7 +327,7 @@ public class AccountManagerScreen extends Screen {
         });
     }
 
-    /** In-panel overlay while the device-code flow waits for the browser. */
+    /** In-panel overlay while browser OAuth waits for its local callback. */
     private void drawMsOverlay(GuiGraphicsExtractor g, int x, int y) {
         // Scrim over the whole panel; the zone swallows clicks under the card.
         M3.roundRect(g, x, y, PANEL_W, PANEL_H, M3.SHAPE_XL, M3.withAlpha(M3.SCRIM, 0xA0));
@@ -323,39 +347,16 @@ public class AccountManagerScreen extends Screen {
         smallFont.drawCenteredString(g, Lang.tr("acct.ms_pending"), mid, cy + 8, M3.ON_SURFACE_VARIANT);
 
         if (msUserCode == null) {
-            // Still fetching the device code.
+            // Still preparing the local browser callback.
             int dots = 1 + (int) (System.currentTimeMillis() / 400) % 3;
             titleFont.drawCenteredString(g, "···".substring(0, dots),
                     mid, cy + 24, M3.ON_SURFACE_VARIANT);
             return;
         }
 
-        titleFont.drawCenteredString(g, msUserCode, mid, cy + 21, M3.PRIMARY);
-        smallFont.drawCenteredString(g, Lang.tr("acct.ms_enter_code"), mid, cy + 38, M3.ON_SURFACE);
-        if (msVerifyUri != null) {
-            smallFont.drawCenteredString(g, msVerifyUri, mid, cy + 50, M3.ON_SURFACE_VARIANT);
-        }
-
-        // copy button (tonal)
-        boolean copied = Util.getMillis() - copiedAt < 1500;
-        String label = Lang.tr(copied ? "acct.copied" : "acct.copy");
-        int bw = (int) smallFont.width(label) + 20;
-        int bx = (int) (mid - bw / 2f);
-        int by = cy + ch - BTN_H - 8;
-        boolean hover = isOver(bx, by, bw, BTN_H);
-        float ht = animTo("mscopy", hover ? 1f : 0f, 12f);
-        int bg = M3.layered(M3.SECONDARY_CONTAINER, M3.ON_SECONDARY_CONTAINER, (int) (M3.STATE_HOVER * ht));
-        M3.roundRect(g, bx, by, bw, BTN_H, M3.pill(BTN_H), bg);
-        Ripple.draw(g, "mscopy", bx, by, bw, BTN_H, M3.ON_SECONDARY_CONTAINER);
-        smallFont.drawCenteredString(g, label, mid,
-                by + (BTN_H - smallFont.lineHeight()) / 2f, M3.ON_SECONDARY_CONTAINER);
-        addZone(bx, by, bw, BTN_H, () -> {
-            Ripple.press("mscopy", mouseX, mouseY);
-            if (msUserCode != null) {
-                MicrosoftAuth.copyToClipboard(msUserCode);
-                copiedAt = Util.getMillis();
-            }
-        });
+        titleFont.drawCenteredString(g, Lang.tr("acct.ms_browser_wait"), mid, cy + 25, M3.PRIMARY);
+        smallFont.drawCenteredString(g, Lang.tr("acct.ms_browser_opened"), mid, cy + 50,
+                M3.ON_SURFACE_VARIANT);
     }
 
     /** Standard M3 icon button. */
@@ -398,25 +399,24 @@ public class AccountManagerScreen extends Screen {
         if (msPending) return;
         msPending = true;
         msUserCode = null;
-        msVerifyUri = null;
         error = "";
         msAuth = new MicrosoftAuth();
         msAuth.start(
-                code -> {
-                    msUserCode = code.userCode();
-                    msVerifyUri = code.verificationUri();
-                },
+                ignored -> msUserCode = "",
                 result -> {
                     AccountManager.instance.addMicrosoft(
                             result.uuid(), result.name(), result.mcAccessToken(), result.msRefreshToken());
                     msPending = false;
                     msUserCode = null;
                     error = "";
+                    NotificationManager.instance.success(
+                            Lang.tr("acct.login_success", result.name()));
                 },
                 message -> {
                     msPending = false;
                     msUserCode = null;
                     error = Lang.tr("acct.ms_failed", message);
+                    NotificationManager.instance.error(error);
                 });
     }
 

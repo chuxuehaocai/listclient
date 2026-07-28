@@ -1,17 +1,19 @@
 package dev.naominet.listclient.utils;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.network.chat.Component;
+import dev.naominet.listclient.ui.notification.NotificationManager;
 
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class ClientUtils {
-    private static Minecraft mc = Minecraft.getInstance();
     private static final Queue<Runnable> taskQueue = new ConcurrentLinkedQueue<>();
 
     public static void sendMessage(String msg){
-        addNewMissonToRenderThread(() -> mc.gui.hud.getChat().addServerSystemMessage(Component.literal("[\u00A7bList\u00A7f]\u00A77 "+msg)));
+        NotificationManager.instance.info(stripFormatting(msg));
+    }
+
+    private static String stripFormatting(String text) {
+        return text == null ? "" : text.replaceAll("\u00A7[0-9A-FK-ORa-fk-or]", "");
     }
 
     public static void addNewMissonToRenderThread(Runnable runnable){

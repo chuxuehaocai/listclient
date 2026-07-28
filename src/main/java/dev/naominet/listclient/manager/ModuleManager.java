@@ -2,15 +2,17 @@ package dev.naominet.listclient.manager;
 
 import dev.naominet.listclient.file.ConfigWriter;
 import dev.naominet.listclient.module.Module;
+import dev.naominet.listclient.module.combat.KillAura;
+import dev.naominet.listclient.module.combat.Velocity;
 import dev.naominet.listclient.module.misc.NoCommands;
 import dev.naominet.listclient.module.movement.Fly;
 import dev.naominet.listclient.module.movement.Speed;
 import dev.naominet.listclient.module.movement.Sprint;
-import dev.naominet.listclient.module.render.ClickGui;
-import dev.naominet.listclient.module.render.Interface;
-import dev.naominet.listclient.module.render.InventoryDisplay;
-import dev.naominet.listclient.module.render.LyricDisplay;
-import dev.naominet.listclient.module.render.MusicPlayer;
+import dev.naominet.listclient.module.player.Derp;
+import dev.naominet.listclient.module.player.FastPlace;
+import dev.naominet.listclient.module.player.NoFall;
+import dev.naominet.listclient.module.render.*;
+import dev.naominet.listclient.module.world.Scaffold;
 import org.msgpack.core.MessageBufferPacker;
 import org.msgpack.core.MessageUnpacker;
 
@@ -36,9 +38,18 @@ public class ModuleManager implements ConfigWriter {
         modules.add(new Speed());
         modules.add(new Fly());
         modules.add(new InventoryDisplay());
+        modules.add(new TargetHUD());
         modules.add(new MusicPlayer());
         modules.add(new LyricDisplay());
         modules.add(new ClickGui());
+        modules.add(new FastPlace());
+        modules.add(new ESP());
+        modules.add(new NoFall());
+        modules.add(new FullBright());
+        modules.add(new KillAura());
+        modules.add(new Velocity());
+        modules.add(new Scaffold());
+        modules.add(new Derp());
     }
 
     public ArrayList<Module> getModules() {

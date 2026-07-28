@@ -9,10 +9,14 @@
   "client": [
     "mixins.MixinCapeLayer",
     "mixins.MixinChatScreen",
+    "mixins.MixinClientPacketListener",
     "mixins.MixinConnection",
+    "mixins.MixinEntity",
     "mixins.MixinGui",
     "mixins.MixinHud",
     "mixins.MixinKeyboardHandler",
+    "mixins.MixinLivingEntity",
+    "mixins.MixinLivingEntityRenderer",
     "mixins.MixinLocalPlayer",
     "mixins.MixinMinecraft",
     "mixins.MixinMouseHandler"

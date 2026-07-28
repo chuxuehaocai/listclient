@@ -8,6 +8,7 @@ import dev.naominet.listclient.manager.FileManager;
 import dev.naominet.listclient.manager.ModuleManager;
 import dev.naominet.listclient.module.Module;
 import dev.naominet.listclient.ncmApi.NCMAPI;
+import dev.naominet.listclient.ui.notification.NotificationManager;
 import dev.naominet.listclient.utils.WavPlayer;
 import net.minecraft.client.Minecraft;
 import org.msgpack.core.MessageBufferPacker;
@@ -25,12 +26,14 @@ public class ListClient {
         FileManager.instance.read();
         CommandManager.instance.initialize();
         EventManager.instance.register(this);
+        NotificationManager.instance.start();
 
         WavPlayer.playWav("startup.wav", false);
     }
 
     //Invoke when minecraft stop
     public void stop(){
+        NotificationManager.instance.stop();
         FileManager.instance.save();
     }
 
@@ -45,9 +48,16 @@ public class ListClient {
         if (Minecraft.getInstance().gui.screen() != null) {
             return;
         }
-        for (Module m : ModuleManager.instance.getModules())
-            if(e.getKeyCode() == m.getKeyCode())
+        for (Module m : ModuleManager.instance.getModules()) {
+            if (e.getKeyCode() == m.getKeyCode()) {
                 m.setEnable(!m.isEnable());
+                if (m.isEnable()) {
+                    NotificationManager.instance.success("Enabled " + m.getName() + ".");
+                } else {
+                    NotificationManager.instance.info("Disabled " + m.getName() + ".");
+                }
+            }
+        }
     }
 
 }

@@ -1,6 +1,7 @@
 package dev.naominet.listclient.module.render;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.platform.NativeImage;
 import dev.naominet.listclient.core.ListClient;
 import dev.naominet.listclient.module.Category;
 import dev.naominet.listclient.module.Module;
@@ -28,14 +29,15 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.resources.Identifier;
 
 import java.awt.Color;
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
-import javax.imageio.ImageIO;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * NetEase Cloud Music entry module.
@@ -118,10 +120,17 @@ public class MusicPlayer extends Module {
     public List<NcmSong> playlistTracks = new CopyOnWriteArrayList<>();
     public float listScroll;
     public float listScrollTarget;
-    /** How many tracks we've requested so far (offset for next page). */
+    /** Server offset for the next page; advances by the raw response size. */
     public int playlistTrackOffset;
     public boolean playlistHasMore;
-    public static final int PLAYLIST_PAGE_SIZE = 30;
+    public boolean playlistLoading;
+    public static final int PLAYLIST_PAGE_SIZE = 100;
+    public static final int PLAYLIST_PREFETCH_DISTANCE = 20;
+    private int playlistInFlightOffset = -1;
+    private int playlistVisibleLastIndex = -1;
+    private boolean playlistAutoLoadBlocked;
+    private final AtomicLong playlistGeneration = new AtomicLong();
+    private final Set<Long> playlistTrackIds = new HashSet<>();
 
     /* search */
     public String searchQuery = "";
@@ -164,6 +173,10 @@ public class MusicPlayer extends Module {
     public String qrNicknameHint = "";
 
     private boolean sessionStarted;
+    private final AtomicLong playbackRequest = new AtomicLong();
+    private volatile Thread playbackUrlThread;
+    private volatile Thread playbackDetailThread;
+    private volatile Thread playbackLyricsThread;
 
     public MusicPlayer() {
         super("MusicPlayer", Category.Render);
@@ -267,9 +280,9 @@ public class MusicPlayer extends Module {
         int x = (int) getX();
         int y = (int) getY();
 
-        // M3 card: surface container, medium shape; translucent for game visibility.
+        // Shared fluid surface with the lyric player, tinted by the current album.
         M3.shadow(g, x, y, w, h, M3.SHAPE_M);
-        M3.roundRect(g, x, y, w, h, M3.SHAPE_M, M3.withAlpha(M3.SURFACE_CONTAINER, 0xE6));
+        M3.lyricBackground(g, x, y, w, h, currentSong != null);
 
         // cover = square album art; fall back to circular user avatar only when idle
         int artSize = 28;
@@ -297,10 +310,7 @@ public class MusicPlayer extends Module {
         int textX = ax + artSize + 6;
         if (currentSong != null) {
             titleFont.drawString(g, ellipsize(currentSong.name, 14), textX, y + 4, M3.ON_SURFACE);
-            String sub = currentLyricLine();
-            if (sub == null || sub.isEmpty()) {
-                sub = currentSong.artists == null ? "" : currentSong.artists;
-            }
+            String sub = currentSong.artists == null ? "" : currentSong.artists;
             subFont.drawString(g, ellipsize(sub, 16), textX, y + 15, M3.ON_SURFACE_VARIANT);
             setSuffix(ellipsize(currentSong.name, 12));
         } else if (user != null && user.loggedIn) {
@@ -320,12 +330,12 @@ public class MusicPlayer extends Module {
                 audio.isPlaying(), "widget-toggle");
         drawMiniBtn(g, bx + 18, by, Icons.SKIP_NEXT, false, "widget-next");
 
-        // Compact M3 expressive determinate progress indicator.
+        // Compact display-only M3 determinate progress indicator.
         float prog = currentSong == null ? 0f : audio.progress();
         int barX = textX;
         int barW = w - (textX - x) - 58;
-        int barY = y + h - 7;
-        M3.wavyProgress(g, barX, barY, barW, 5, prog);
+        int barY = y + h - 5;
+        M3.linearProgress(g, barX, barY, barW, 2, prog);
     }
 
     /**
@@ -689,44 +699,101 @@ public class MusicPlayer extends Module {
     }
 
     public void openPlaylist(NcmPlaylist pl) {
+        playlistGeneration.incrementAndGet();
         currentPlaylist = pl;
         playlistTracks = new CopyOnWriteArrayList<>();
+        playlistTrackIds.clear();
         playlistTrackOffset = 0;
+        playlistInFlightOffset = -1;
+        playlistVisibleLastIndex = -1;
         playlistHasMore = true;
+        playlistLoading = false;
+        playlistAutoLoadBlocked = false;
         returnPage = page == Page.PLAYLIST ? Page.HOME : page;
         page = Page.PLAYLIST;
         listScroll = listScrollTarget = 0;
-        loadMorePlaylistTracks();
+        requestNextPlaylistPage();
     }
 
     public void loadMorePlaylistTracks() {
-        if (currentPlaylist == null || busy || !playlistHasMore) return;
-        busy = true;
-        statusText = playlistTrackOffset == 0
-                ? Lang.tr("music.status.loading_playlist")
-                : Lang.tr("music.status.loading_more");
+        playlistAutoLoadBlocked = false;
+        requestNextPlaylistPage();
+    }
+
+    public void observePlaylistVisibleLastIndex(int lastVisibleIndex) {
+        if (page != Page.PLAYLIST || lastVisibleIndex < 0) return;
+        playlistVisibleLastIndex = Math.max(playlistVisibleLastIndex, lastVisibleIndex);
+        pumpPlaylistPrefetch();
+    }
+
+    private void pumpPlaylistPrefetch() {
+        if (currentPlaylist == null || playlistLoading || !playlistHasMore
+                || playlistAutoLoadBlocked || playlistTrackOffset <= 0) return;
+        int triggerIndex = playlistTrackOffset - PLAYLIST_PREFETCH_DISTANCE - 1;
+        if (playlistVisibleLastIndex >= triggerIndex) {
+            requestNextPlaylistPage();
+        }
+    }
+
+    private void requestNextPlaylistPage() {
+        if (currentPlaylist == null || playlistLoading || !playlistHasMore) return;
+        final long generation = playlistGeneration.get();
         final long pid = currentPlaylist.id;
         final int offset = playlistTrackOffset;
+        playlistLoading = true;
+        playlistInFlightOffset = offset;
+        statusText = offset == 0
+                ? Lang.tr("music.status.loading_playlist")
+                : Lang.tr("music.status.loading_more");
+
         api().async(() -> api().getPlaylistTracks(pid, PLAYLIST_PAGE_SIZE, offset), tracks -> {
-            if (currentPlaylist == null || currentPlaylist.id != pid) {
-                busy = false;
-                return;
+            if (!isCurrentPlaylistRequest(generation, pid, offset)) return;
+            int rawPageSize = tracks.size();
+            for (NcmSong song : tracks) {
+                if (song == null) continue;
+                if (song.id <= 0 || playlistTrackIds.add(song.id)) {
+                    playlistTracks.add(song);
+                }
             }
-            if (offset == 0) {
-                playlistTracks = new CopyOnWriteArrayList<>(tracks);
-            } else {
-                playlistTracks.addAll(tracks);
-            }
-            playlistTrackOffset = offset + tracks.size();
-            // Short page ⇒ no more.
-            playlistHasMore = tracks.size() >= PLAYLIST_PAGE_SIZE;
-            busy = false;
+            int nextOffset = offset + rawPageSize;
+            playlistTrackOffset = nextOffset;
+            boolean belowKnownTotal = currentPlaylist.trackCount <= 0
+                    || nextOffset < currentPlaylist.trackCount;
+            playlistHasMore = rawPageSize >= PLAYLIST_PAGE_SIZE && belowKnownTotal;
+            playlistLoading = false;
+            playlistInFlightOffset = -1;
+            playlistAutoLoadBlocked = false;
             statusText = currentPlaylist.name + " · "
                     + Lang.tr("music.songs_count", playlistTracks.size() + (playlistHasMore ? "+" : ""));
+            pumpPlaylistPrefetch();
         }, ex -> {
-            busy = false;
+            if (!isCurrentPlaylistRequest(generation, pid, offset)) return;
+            playlistLoading = false;
+            playlistInFlightOffset = -1;
+            playlistAutoLoadBlocked = true;
             errorText = Lang.tr("music.status.playlist_failed", ex.getMessage());
         });
+    }
+
+    private boolean isCurrentPlaylistRequest(long generation, long playlistId, int offset) {
+        return playlistGeneration.get() == generation
+                && currentPlaylist != null
+                && currentPlaylist.id == playlistId
+                && playlistLoading
+                && playlistInFlightOffset == offset;
+    }
+
+    private void resetPlaylistPaging() {
+        playlistGeneration.incrementAndGet();
+        playlistLoading = false;
+        playlistInFlightOffset = -1;
+        playlistVisibleLastIndex = -1;
+        playlistAutoLoadBlocked = false;
+        currentPlaylist = null;
+        playlistTracks = new CopyOnWriteArrayList<>();
+        playlistTrackIds.clear();
+        playlistTrackOffset = 0;
+        playlistHasMore = false;
     }
 
     public void runSearch(String q) {
@@ -747,6 +814,7 @@ public class MusicPlayer extends Module {
     }
 
     public void doLogout() {
+        resetPlaylistPaging();
         statusText = Lang.tr("music.status.logging_out");
         api().async(() -> {
             api().logout();
@@ -877,11 +945,19 @@ public class MusicPlayer extends Module {
     /* ================================================================== */
 
     public void playIndex(int index) {
-        if (playQueue.isEmpty()) return;
-        if (index < 0 || index >= playQueue.size()) return;
+        if (playQueue.isEmpty() || index < 0 || index >= playQueue.size()) return;
+
+        long request = playbackRequest.incrementAndGet();
+        interruptPlaybackRequests();
         queueIndex = index;
         NcmSong song = playQueue.get(index);
         currentSong = song;
+        // If the song already carries a cover URL (e.g. from a playlist batch load),
+        // extract the Monet seed immediately so the theme updates without waiting for
+        // the detail-enrichment thread (which early-returns when metadata is complete).
+        if (song.coverUrl != null && !song.coverUrl.isEmpty()) {
+            extractSeedAsync(song.coverUrl);
+        }
         lyrics = new CopyOnWriteArrayList<>();
         lyricsLoading = true;
         lyricsError = "";
@@ -890,46 +966,94 @@ public class MusicPlayer extends Module {
         lyricMotionAt = 0L;
         lyricsFollowPlayback = true;
         statusText = Lang.tr("music.status.fetching_url");
+        errorText = "";
         final long id = song.id;
 
-        api().async(() -> {
-            NcmSong full = song;
-            if (song.coverUrl == null || song.coverUrl.isEmpty() || song.durationMs <= 0) {
-                try {
-                    full = api().getSong(id);
-                    full.playUrl = song.playUrl;
-                } catch (Exception ignored) {
-                }
-            }
+        playbackUrlThread = startPlaybackThread("url", request, () -> {
             String url = api().getMusicURL(String.valueOf(id));
-            full.playUrl = url;
-            List<NcmLyricLine> lrc = api().getLyrics(id);
-            return new Pair<>(full, lrc);
-        }, pair -> {
-            if (currentSong == null || currentSong.id != id) return;
-            NcmSong full = pair.getFirst();
-            currentSong = full;
-            // Now-playing song changed → re-seed the Monet theme from its cover.
-            extractSeedAsync(full.coverUrl);
-            if (queueIndex >= 0 && queueIndex < playQueue.size()) {
-                playQueue.set(queueIndex, full);
-            }
-            lyrics = new CopyOnWriteArrayList<>(pair.getSecond());
-            lyricsLoading = false;
-            lyricsError = lyrics.isEmpty() ? Lang.tr("music.lyrics_empty") : "";
-            if (full.playUrl == null || full.playUrl.isEmpty()) {
-                errorText = Lang.tr("music.status.no_play_url");
-                statusText = Lang.tr("music.status.cannot_play");
-                return;
-            }
-            statusText = Lang.tr("music.status.playing", full.name);
-            audio.playUrl(full.playUrl, full.durationMs);
+            if (!playbackRequestCurrent(request)) return;
+            mc.execute(() -> {
+                if (!playbackRequestCurrent(request)) return;
+                if (url == null || url.isEmpty()) {
+                    errorText = Lang.tr("music.status.no_play_url");
+                    statusText = Lang.tr("music.status.cannot_play");
+                    return;
+                }
+                song.playUrl = url;
+                statusText = Lang.tr("music.status.playing", song.name);
+                audio.playUrl(url, song.durationMs);
+            });
         }, ex -> {
-            if (currentSong == null || currentSong.id != id) return;
+            errorText = Lang.tr("music.status.play_failed", ex.getMessage());
+            statusText = Lang.tr("music.status.cannot_play");
+        });
+
+        playbackDetailThread = startPlaybackThread("detail", request, () -> {
+            if (song.coverUrl != null && !song.coverUrl.isEmpty() && song.durationMs > 0) return;
+            NcmSong full = api().getSong(id);
+            if (!playbackRequestCurrent(request)) return;
+            mc.execute(() -> {
+                if (!playbackRequestCurrent(request)) return;
+                full.playUrl = song.playUrl;
+                currentSong = full;
+                if (index < playQueue.size()) playQueue.set(index, full);
+                extractSeedAsync(full.coverUrl);
+            });
+        }, ex -> {
+            // Queue metadata is sufficient for playback; detail is enrichment only.
+        });
+
+        playbackLyricsThread = startPlaybackThread("lyrics", request, () -> {
+            List<NcmLyricLine> loaded = api().getLyrics(id);
+            if (!playbackRequestCurrent(request)) return;
+            mc.execute(() -> {
+                if (!playbackRequestCurrent(request)) return;
+                lyrics = new CopyOnWriteArrayList<>(loaded);
+                lyricsLoading = false;
+                lyricsError = lyrics.isEmpty() ? Lang.tr("music.lyrics_empty") : "";
+            });
+        }, ex -> {
             lyricsLoading = false;
             lyricsError = Lang.tr("music.lyrics_error");
-            errorText = Lang.tr("music.status.play_failed", ex.getMessage());
         });
+    }
+
+    private Thread startPlaybackThread(String purpose, long request,
+                                       InterruptibleWork work, java.util.function.Consumer<Exception> onError) {
+        Thread thread = new Thread(() -> {
+            try {
+                work.run();
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            } catch (Exception ex) {
+                if (!playbackRequestCurrent(request)) return;
+                mc.execute(() -> {
+                    if (playbackRequestCurrent(request)) onError.accept(ex);
+                });
+            }
+        }, "ncm-playback-" + purpose + "-" + request);
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
+    }
+
+    private boolean playbackRequestCurrent(long request) {
+        return !Thread.currentThread().isInterrupted() && playbackRequest.get() == request;
+    }
+
+    private void interruptPlaybackRequests() {
+        interrupt(playbackUrlThread);
+        interrupt(playbackDetailThread);
+        interrupt(playbackLyricsThread);
+    }
+
+    private static void interrupt(Thread thread) {
+        if (thread != null) thread.interrupt();
+    }
+
+    @FunctionalInterface
+    private interface InterruptibleWork {
+        void run() throws Exception;
     }
 
     /**
@@ -947,17 +1071,14 @@ public class MusicPlayer extends Module {
             if (b == null || b.length == 0) {
                 return null;
             }
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(b));
-            if (img == null) {
-                return null;
+            try (NativeImage img = NativeImage.read(new ByteArrayInputStream(b))) {
+                int w = img.getWidth();
+                int h = img.getHeight();
+                if (w <= 0 || h <= 0) {
+                    return null;
+                }
+                return MonetColor.seedFromPixels(img.getPixels(), w, h);
             }
-            int w = img.getWidth();
-            int h = img.getHeight();
-            if (w <= 0 || h <= 0) {
-                return null;
-            }
-            int[] argb = img.getRGB(0, 0, w, h, null, 0, w);
-            return MonetColor.seedFromPixels(argb, w, h);
         }, seed -> {
             if (seed != null) {
                 MonetTheme.requestSeed(seed);

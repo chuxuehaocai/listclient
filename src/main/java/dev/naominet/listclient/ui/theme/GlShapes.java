@@ -199,6 +199,95 @@ final class GlShapes {
     }
 
     /**
+     * Low-frequency animated mesh gradient clipped by its own rounded geometry.
+     * Rows terminate on the rounded outline instead of relying on a rectangular
+     * scissor, so HUD surfaces retain their M3 silhouette over any background.
+     */
+    static void fluidMesh(GuiGraphicsExtractor g, float x, float y, float w, float h,
+                          float radius, double time, int... colors) {
+        if (w <= 0 || h <= 0 || colors == null || colors.length == 0) return;
+        float r = Math.min(radius, Math.min(w, h) / 2f);
+        int cols = Math.max(10, Math.min(40, (int) Math.ceil(w / 6f)));
+        int rows = Math.max(12, Math.min(48, (int) Math.ceil(h / 2f)));
+        int points = (cols + 1) * (rows + 1);
+        float[] px = new float[points];
+        float[] py = new float[points];
+        int[] pc = new int[points];
+
+        for (int row = 0; row <= rows; row++) {
+            float v = row / (float) rows;
+            for (int col = 0; col <= cols; col++) {
+                float u = col / (float) cols;
+                int index = row * (cols + 1) + col;
+                float edge = (float) (Math.sin(Math.PI * u) * Math.sin(Math.PI * v));
+                float du = ((float) Math.sin(v * 8.1 + time * 0.31)
+                        + (float) Math.cos((u + v) * 5.3 - time * 0.17)) * 0.035f * edge;
+                float dv = ((float) Math.cos(u * 7.4 - time * 0.27)
+                        + (float) Math.sin((u - v) * 6.2 + time * 0.13)) * 0.035f * edge;
+                float warpedV = Math.max(0f, Math.min(1f, v + dv));
+                float localY = warpedV * h;
+                float inset = roundedInset(localY, w, h, r);
+                float warpedU = Math.max(0f, Math.min(1f, u + du));
+                px[index] = x + inset + warpedU * (w - inset * 2f);
+                py[index] = y + localY;
+                pc[index] = fluidColor(u, v, time, colors);
+            }
+        }
+
+        int cells = cols * rows;
+        float[] xy = new float[cells * 2 * 8];
+        int[] color = new int[cells * 2 * 4];
+        int p = 0;
+        for (int row = 0; row < rows; row++) {
+            for (int col = 0; col < cols; col++) {
+                int a = row * (cols + 1) + col;
+                int b = a + 1;
+                int d = (row + 1) * (cols + 1) + col;
+                int c = d + 1;
+                // GUI quads are backface-culled; emit shoelace-negative winding.
+                p = quad(xy, color, p,
+                        px[a], py[a], pc[a], px[c], py[c], pc[c],
+                        px[b], py[b], pc[b], px[b], py[b], pc[b]);
+                p = quad(xy, color, p,
+                        px[a], py[a], pc[a], px[d], py[d], pc[d],
+                        px[c], py[c], pc[c], px[c], py[c], pc[c]);
+            }
+        }
+        submit(g, xy, color, x, y, x + w, y + h);
+    }
+
+    private static float roundedInset(float localY, float w, float h, float radius) {
+        if (radius <= 0f) return 0f;
+        float edgeY = Math.min(localY, h - localY);
+        if (edgeY >= radius) return 0f;
+        float dy = radius - Math.max(0f, edgeY);
+        float inset = radius - (float) Math.sqrt(Math.max(0f, radius * radius - dy * dy));
+        return Math.min(inset, w / 2f);
+    }
+
+    private static int fluidColor(float u, float v, double time, int[] colors) {
+        double wr = 0, wg = 0, wb = 0, total = 0;
+        for (int i = 0; i < colors.length; i++) {
+            double phase = Math.PI * 2.0 * i / colors.length;
+            double speed = 0.075 + i * 0.014;
+            double cx = 0.5 + Math.sin(time * speed + phase) * (0.34 - (i & 1) * 0.05);
+            double cy = 0.5 + Math.cos(time * (speed * 0.83) + phase * 1.37) * 0.32;
+            double dx = u - cx;
+            double dy = v - cy;
+            double weight = 1.0 / (0.035 + dx * dx + dy * dy);
+            int color = colors[i];
+            wr += ((color >> 16) & 255) * weight;
+            wg += ((color >> 8) & 255) * weight;
+            wb += (color & 255) * weight;
+            total += weight;
+        }
+        int r = Math.max(0, Math.min(255, (int) Math.round(wr / total)));
+        int g = Math.max(0, Math.min(255, (int) Math.round(wg / total)));
+        int b = Math.max(0, Math.min(255, (int) Math.round(wb / total)));
+        return 0xD8000000 | (r << 16) | (g << 8) | b;
+    }
+
+    /**
      * Filled, anti-aliased sine band clipped horizontally to a determinate
      * progress boundary. The center line oscillates while the thickness stays
      * constant, producing the M3 expressive wavy progress treatment.

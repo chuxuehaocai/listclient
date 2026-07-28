@@ -3,26 +3,32 @@ package dev.naominet.listclient.auth;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.sun.net.httpserver.HttpServer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.Util;
 
 import java.net.URI;
+import java.net.InetSocketAddress;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * Microsoft account login via the standard OAuth 2.0 device-code flow
- * (HMCL/launcher style):
+ * Microsoft account login through the legacy List client's browser OAuth flow:
  * <ol>
- *   <li>request a device code + user code from login.microsoftonline.com,</li>
- *   <li>poll the token endpoint while the user enters the code in a browser,</li>
- *   <li>exchange the MS access token through Xbox Live &rarr; XSTS &rarr;
+ *   <li>open the Microsoft authorization page and receive its local callback,</li>
+ *   <li>exchange the authorization code for a Microsoft access/refresh token,</li>
+ *   <li>exchange the access token through Xbox Live &rarr; XSTS &rarr;
  *       Minecraft services,</li>
  *   <li>fetch the Minecraft profile (uuid + name).</li>
  * </ol>
@@ -33,11 +39,15 @@ import java.util.function.Consumer;
  */
 public final class MicrosoftAuth {
 
-    /** Public client id (the well-known Minecraft/Xbox one used by many open-source launchers); replace if you have your own Azure app. */
-    private static final String CLIENT_ID = "00000000402b5328";
+    /** OAuth application used by the legacy List client browser flow. */
+    private static final String CLIENT_ID = "288ec5dd-6736-4d4b-9b96-30e083a8cad2";
+    private static final int REDIRECT_PORT = 29116;
+    private static final String REDIRECT_URI = "http://localhost:" + REDIRECT_PORT + "/authentication-response";
+    // Existing refresh tokens were issued with this legacy desktop redirect URI.
+    private static final String REFRESH_REDIRECT_URI = "https://login.live.com/oauth20_desktop.srf";
 
-    private static final String DEVICE_CODE_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
-    private static final String TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+    private static final String AUTHORIZE_URL = "https://login.live.com/oauth20_authorize.srf";
+    private static final String TOKEN_URL = "https://login.live.com/oauth20_token.srf";
     private static final String XBL_URL = "https://user.auth.xboxlive.com/user/authenticate";
     private static final String XSTS_URL = "https://xsts.auth.xboxlive.com/xsts/authorize";
     private static final String MC_LOGIN_URL = "https://api.minecraftservices.com/authentication/login_with_xbox";
@@ -48,7 +58,7 @@ public final class MicrosoftAuth {
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
-    /** Code the user must enter in the browser, plus where to enter it. */
+    /** Browser handoff state. The legacy loopback flow has no user code. */
     public record DeviceCode(String userCode, String verificationUri) {
     }
 
@@ -57,17 +67,45 @@ public final class MicrosoftAuth {
     }
 
     private volatile boolean cancelled;
+    private volatile HttpServer callbackServer;
 
     /**
-     * Starts the device-code flow on a background thread and auto-opens the
-     * verification page in the system browser once the user code is known.
+     * Starts the legacy browser OAuth flow on a background thread. The listener
+     * is ready before the authorization page is opened.
      *
-     * @param onCode    receives the user code to display (render thread)
+     * @param onCode    receives browser handoff state (render thread)
      * @param onSuccess receives the finished login (render thread)
      * @param onError   receives a human-readable error string (render thread)
      */
     public void start(Consumer<DeviceCode> onCode, Consumer<Result> onSuccess, Consumer<String> onError) {
-        Thread t = new Thread(() -> run(onCode, onSuccess, onError), "ms-auth");
+        startWorker(() -> run(onCode, onSuccess, onError));
+    }
+
+    /**
+     * Restores a Microsoft account from its persisted OAuth refresh token.
+     * This ports the legacy SessionUtils refresh-token backend, but keeps all
+     * networking off the render thread and returns a fresh Minecraft token.
+     */
+    public void startRefresh(String refreshToken, Consumer<Result> onSuccess, Consumer<String> onError) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            fail(onError, "missing refresh token");
+            return;
+        }
+        startWorker(() -> runRefresh(refreshToken, onSuccess, onError));
+    }
+
+    /** Imports an already-issued Minecraft services access token. */
+    public void startMinecraftToken(String accessToken, Consumer<Result> onSuccess, Consumer<String> onError) {
+        if (accessToken == null || accessToken.isBlank()) {
+            fail(onError, "missing access token");
+            return;
+        }
+        startWorker(() -> runMinecraftToken(accessToken, onSuccess, onError));
+    }
+
+    private void startWorker(Runnable work) {
+        cancelled = false;
+        Thread t = new Thread(work, "ms-auth");
         t.setDaemon(true);
         t.start();
     }
@@ -75,153 +113,208 @@ public final class MicrosoftAuth {
     /** Stops the poll loop; no further callbacks are delivered. */
     public void cancel() {
         cancelled = true;
+        HttpServer server = callbackServer;
+        if (server != null) {
+            server.stop(0);
+            callbackServer = null;
+        }
     }
 
     /* ================================================================== */
     /*  flow                                                              */
     /* ================================================================== */
 
-    private void run(Consumer<DeviceCode> onCode, Consumer<Result> onSuccess, Consumer<String> onError) {
+    private void runRefresh(String refreshToken, Consumer<Result> onSuccess, Consumer<String> onError) {
         try {
-            // A: device code
-            JsonObject dc = postForm(DEVICE_CODE_URL,
-                    "client_id=" + CLIENT_ID + "&scope=" + enc("XboxLive.signin offline_access"));
-            String deviceCode = dc.get("device_code").getAsString();
-            String userCode = dc.get("user_code").getAsString();
-            String verificationUri = dc.get("verification_uri").getAsString();
-            long intervalMs = (dc.has("interval") ? dc.get("interval").getAsLong() : 5L) * 1000L;
-            long deadline = System.currentTimeMillis()
-                    + (dc.has("expires_in") ? dc.get("expires_in").getAsLong() : 900L) * 1000L;
+            JsonObject token;
+            try {
+                token = requestRefreshToken(refreshToken, REDIRECT_URI);
+            } catch (IllegalStateException firstFailure) {
+                // Stored accounts from the legacy client were authorized against
+                // the desktop URI. Preserve their ability to refresh without
+                // weakening the browser callback used by new accounts.
+                token = requestRefreshToken(refreshToken, REFRESH_REDIRECT_URI);
+            }
+            String msAccessToken = required(token, "access_token", "Microsoft refresh response");
+            String nextRefreshToken = token.has("refresh_token")
+                    ? token.get("refresh_token").getAsString() : refreshToken;
+            completeXboxLogin(msAccessToken, nextRefreshToken, onSuccess, onError);
+        } catch (Exception ex) {
+            failException(onError, ex);
+        }
+    }
 
-            onRenderThread(() -> {
-                onCode.accept(new DeviceCode(userCode, verificationUri));
+    private static JsonObject requestRefreshToken(String refreshToken, String redirectUri) throws Exception {
+        return postForm(TOKEN_URL,
+                "client_id=" + enc(CLIENT_ID)
+                        + "&refresh_token=" + enc(refreshToken)
+                        + "&grant_type=refresh_token"
+                        + "&redirect_uri=" + enc(redirectUri)
+                        + "&scope=" + enc("XboxLive.signin offline_access"));
+    }
+
+    private void runMinecraftToken(String accessToken, Consumer<Result> onSuccess, Consumer<String> onError) {
+        try {
+            Profile profile = fetchProfile(accessToken);
+            if (cancelled) return;
+            onRenderThread(() -> onSuccess.accept(
+                    new Result(profile.uuid(), profile.name(), accessToken, "")));
+        } catch (Exception ex) {
+            failException(onError, ex);
+        }
+    }
+
+    private void completeXboxLogin(String msAccessToken, String msRefreshToken,
+                                   Consumer<Result> onSuccess, Consumer<String> onError) throws Exception {
+        if (cancelled) return;
+
+        JsonObject xblProps = new JsonObject();
+        xblProps.addProperty("AuthMethod", "RPS");
+        xblProps.addProperty("SiteName", "user.auth.xboxlive.com");
+        xblProps.addProperty("RpsTicket", "d=" + msAccessToken);
+        JsonObject xblBody = new JsonObject();
+        xblBody.add("Properties", xblProps);
+        xblBody.addProperty("RelyingParty", "http://auth.xboxlive.com");
+        xblBody.addProperty("TokenType", "JWT");
+        JsonObject xbl = postJson(XBL_URL, xblBody);
+        String xblToken = required(xbl, "Token", "Xbox Live response");
+        String uhs = xbl.getAsJsonObject("DisplayClaims")
+                .getAsJsonArray("xui").get(0).getAsJsonObject()
+                .get("uhs").getAsString();
+
+        if (cancelled) return;
+
+        JsonObject xstsProps = new JsonObject();
+        xstsProps.addProperty("SandboxId", "RETAIL");
+        JsonArray userTokens = new JsonArray();
+        userTokens.add(xblToken);
+        xstsProps.add("UserTokens", userTokens);
+        JsonObject xstsBody = new JsonObject();
+        xstsBody.add("Properties", xstsProps);
+        xstsBody.addProperty("RelyingParty", "rp://api.minecraftservices.com/");
+        xstsBody.addProperty("TokenType", "JWT");
+
+        HttpResponse<String> xstsResp = send(HttpRequest.newBuilder(URI.create(XSTS_URL))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(xstsBody.toString()))
+                .build());
+        JsonObject xsts = parseObject(xstsResp.body(), "XSTS response");
+        if (xstsResp.statusCode() != 200) {
+            throw new IllegalStateException(xstsErrorText(xsts, xstsResp.statusCode()));
+        }
+        String xstsToken = required(xsts, "Token", "XSTS response");
+
+        if (cancelled) return;
+
+        JsonObject mcBody = new JsonObject();
+        mcBody.addProperty("identityToken", "XBL3.0 x=" + uhs + ";" + xstsToken);
+        JsonObject mc = postJson(MC_LOGIN_URL, mcBody);
+        String mcAccessToken = required(mc, "access_token", "Minecraft login response");
+        Profile profile = fetchProfile(mcAccessToken);
+
+        if (cancelled) return;
+        onRenderThread(() -> onSuccess.accept(new Result(
+                profile.uuid(), profile.name(), mcAccessToken, msRefreshToken)));
+    }
+
+    private Profile fetchProfile(String accessToken) throws Exception {
+        HttpResponse<String> response = send(HttpRequest.newBuilder(URI.create(MC_PROFILE_URL))
+                .header("Authorization", "Bearer " + accessToken)
+                .GET()
+                .build());
+        if (response.statusCode() == 404) {
+            throw new IllegalStateException("this account owns no Minecraft profile");
+        }
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("profile HTTP " + response.statusCode());
+        }
+        JsonObject profile = parseObject(response.body(), "Minecraft profile");
+        return new Profile(required(profile, "id", "Minecraft profile"),
+                required(profile, "name", "Minecraft profile"));
+    }
+
+    private record Profile(String uuid, String name) {
+    }
+
+    private void run(Consumer<DeviceCode> onCode, Consumer<Result> onSuccess, Consumer<String> onError) {
+        HttpServer server = null;
+        try {
+            CountDownLatch callback = new CountDownLatch(1);
+            String[] codeHolder = new String[1];
+            String[] errorHolder = new String[1];
+            String state = UUID.randomUUID().toString();
+            server = HttpServer.create(new InetSocketAddress(REDIRECT_PORT), 0);
+            callbackServer = server;
+            server.createContext("/authentication-response", exchange -> {
+                String responseText = "Login received. You may close this page.";
+                int responseStatus = 200;
                 try {
-                    Util.getPlatform().openUri(verificationUri);
+                    Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
+                    if (!state.equals(query.get("state"))) {
+                        errorHolder[0] = "Microsoft login state did not match. Please try again.";
+                        responseText = "Login could not be verified. Return to Minecraft and try again.";
+                        responseStatus = 400;
+                    } else {
+                        codeHolder[0] = query.get("code");
+                        errorHolder[0] = query.get("error_description");
+                        if (codeHolder[0] == null && errorHolder[0] == null) {
+                            errorHolder[0] = "authorization response contained no code";
+                        }
+                    }
+                } finally {
+                    byte[] bytes = responseText.getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+                    exchange.sendResponseHeaders(responseStatus, bytes.length);
+                    try (var body = exchange.getResponseBody()) {
+                        body.write(bytes);
+                    }
+                    callback.countDown();
+                }
+            });
+            server.start();
+
+            String authorizationUri = AUTHORIZE_URL
+                    + "?client_id=" + enc(CLIENT_ID)
+                    + "&response_type=code"
+                    + "&redirect_uri=" + enc(REDIRECT_URI)
+                    + "&scope=" + enc("XboxLive.signin offline_access")
+                    + "&state=" + enc(state);
+            onRenderThread(() -> {
+                onCode.accept(new DeviceCode("", authorizationUri));
+                try {
+                    Util.getPlatform().openUri(authorizationUri);
                 } catch (Exception ignored) {
                 }
             });
 
-            // B: poll token endpoint
-            String msAccessToken = null;
-            String msRefreshToken = "";
-            while (msAccessToken == null) {
-                if (cancelled) return;
-                if (System.currentTimeMillis() > deadline) {
-                    fail(onError, "device code expired");
-                    return;
-                }
-                Thread.sleep(intervalMs);
-                if (cancelled) return;
-
-                HttpResponse<String> resp = send(HttpRequest.newBuilder(URI.create(TOKEN_URL))
-                        .header("Content-Type", "application/x-www-form-urlencoded")
-                        .POST(HttpRequest.BodyPublishers.ofString(
-                                "grant_type=" + enc("urn:ietf:params:oauth:grant-type:device_code")
-                                        + "&client_id=" + CLIENT_ID
-                                        + "&device_code=" + enc(deviceCode)))
-                        .build());
-                JsonObject tok = JsonParser.parseString(resp.body()).getAsJsonObject();
-                if (tok.has("access_token")) {
-                    msAccessToken = tok.get("access_token").getAsString();
-                    if (tok.has("refresh_token")) {
-                        msRefreshToken = tok.get("refresh_token").getAsString();
-                    }
-                    break;
-                }
-                String err = tok.has("error") ? tok.get("error").getAsString() : "unknown";
-                switch (err) {
-                    case "authorization_pending" -> {
-                    }
-                    case "slow_down" -> intervalMs += 5000L;
-                    case "expired_token" -> {
-                        fail(onError, "device code expired");
-                        return;
-                    }
-                    case "authorization_declined", "access_denied" -> {
-                        fail(onError, "authorization declined");
-                        return;
-                    }
-                    default -> {
-                        fail(onError, "token error: " + err);
-                        return;
-                    }
-                }
+            while (!cancelled && !callback.await(1, TimeUnit.SECONDS)) {
+            }
+            if (cancelled) return;
+            if (errorHolder[0] != null) {
+                throw new IllegalStateException(errorHolder[0]);
+            }
+            String authorizationCode = codeHolder[0];
+            if (authorizationCode == null || authorizationCode.isBlank()) {
+                throw new IllegalStateException("authorization response contained no code");
             }
 
-            // C: Xbox Live
-            JsonObject xblProps = new JsonObject();
-            xblProps.addProperty("AuthMethod", "RPS");
-            xblProps.addProperty("SiteName", "user.auth.xboxlive.com");
-            xblProps.addProperty("RpsTicket", "d=" + msAccessToken);
-            JsonObject xblBody = new JsonObject();
-            xblBody.add("Properties", xblProps);
-            xblBody.addProperty("RelyingParty", "http://auth.xboxlive.com");
-            xblBody.addProperty("TokenType", "JWT");
-            JsonObject xbl = postJson(XBL_URL, xblBody);
-            String xblToken = xbl.get("Token").getAsString();
-            String uhs = xbl.getAsJsonObject("DisplayClaims")
-                    .getAsJsonArray("xui").get(0).getAsJsonObject()
-                    .get("uhs").getAsString();
-
-            if (cancelled) return;
-
-            // D: XSTS
-            JsonObject xstsProps = new JsonObject();
-            xstsProps.addProperty("SandboxId", "RETAIL");
-            JsonArray userTokens = new JsonArray();
-            userTokens.add(xblToken);
-            xstsProps.add("UserTokens", userTokens);
-            JsonObject xstsBody = new JsonObject();
-            xstsBody.add("Properties", xstsProps);
-            xstsBody.addProperty("RelyingParty", "rp://api.minecraftservices.com/");
-            xstsBody.addProperty("TokenType", "JWT");
-
-            HttpResponse<String> xstsResp = send(HttpRequest.newBuilder(URI.create(XSTS_URL))
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(xstsBody.toString()))
-                    .build());
-            JsonObject xsts = JsonParser.parseString(xstsResp.body()).getAsJsonObject();
-            if (xstsResp.statusCode() != 200) {
-                fail(onError, xstsErrorText(xsts, xstsResp.statusCode()));
-                return;
-            }
-            String xstsToken = xsts.get("Token").getAsString();
-
-            if (cancelled) return;
-
-            // E: Minecraft services
-            JsonObject mcBody = new JsonObject();
-            mcBody.addProperty("identityToken", "XBL3.0 x=" + uhs + ";" + xstsToken);
-            JsonObject mc = postJson(MC_LOGIN_URL, mcBody);
-            String mcAccessToken = mc.get("access_token").getAsString();
-
-            if (cancelled) return;
-
-            // F: profile
-            HttpResponse<String> profResp = send(HttpRequest.newBuilder(URI.create(MC_PROFILE_URL))
-                    .header("Authorization", "Bearer " + mcAccessToken)
-                    .GET()
-                    .build());
-            if (profResp.statusCode() == 404) {
-                fail(onError, "this account owns no Minecraft profile");
-                return;
-            }
-            if (profResp.statusCode() != 200) {
-                fail(onError, "profile HTTP " + profResp.statusCode());
-                return;
-            }
-            JsonObject profile = JsonParser.parseString(profResp.body()).getAsJsonObject();
-            String uuid = profile.get("id").getAsString();
-            String name = profile.get("name").getAsString();
-
-            if (cancelled) return;
-            String refresh = msRefreshToken;
-            onRenderThread(() -> onSuccess.accept(new Result(uuid, name, mcAccessToken, refresh)));
+            JsonObject token = postForm(TOKEN_URL,
+                    "client_id=" + enc(CLIENT_ID)
+                            + "&code=" + enc(authorizationCode)
+                            + "&grant_type=authorization_code"
+                            + "&redirect_uri=" + enc(REDIRECT_URI));
+            String msAccessToken = required(token, "access_token", "Microsoft token response");
+            String refreshToken = token.has("refresh_token")
+                    ? token.get("refresh_token").getAsString() : "";
+            completeXboxLogin(msAccessToken, refreshToken, onSuccess, onError);
         } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
         } catch (Exception ex) {
-            String msg = ex.getMessage();
-            fail(onError, msg == null || msg.isEmpty() ? ex.getClass().getSimpleName() : msg);
+            failException(onError, ex);
+        } finally {
+            if (server != null) server.stop(0);
+            callbackServer = null;
         }
     }
 
@@ -229,9 +322,25 @@ public final class MicrosoftAuth {
     /*  helpers                                                           */
     /* ================================================================== */
 
-    /** Copies text to the system clipboard (render thread only). */
-    public static void copyToClipboard(String text) {
-        Minecraft.getInstance().keyboardHandler.setClipboard(text);
+    private void failException(Consumer<String> onError, Exception ex) {
+        String message = ex.getMessage();
+        fail(onError, message == null || message.isBlank()
+                ? ex.getClass().getSimpleName() : message);
+    }
+
+    private static JsonObject parseObject(String body, String context) {
+        try {
+            return JsonParser.parseString(body).getAsJsonObject();
+        } catch (Exception ex) {
+            throw new IllegalStateException(context + " returned invalid JSON");
+        }
+    }
+
+    private static String required(JsonObject object, String key, String context) {
+        if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
+            throw new IllegalStateException(context + " is missing " + key);
+        }
+        return object.get(key).getAsString();
     }
 
     private void fail(Consumer<String> onError, String message) {
@@ -241,6 +350,19 @@ public final class MicrosoftAuth {
 
     private static void onRenderThread(Runnable r) {
         Minecraft.getInstance().execute(r);
+    }
+
+    private static Map<String, String> parseQuery(String rawQuery) {
+        Map<String, String> values = new HashMap<>();
+        if (rawQuery == null || rawQuery.isBlank()) return values;
+        for (String pair : rawQuery.split("&")) {
+            int separator = pair.indexOf('=');
+            String key = separator < 0 ? pair : pair.substring(0, separator);
+            String value = separator < 0 ? "" : pair.substring(separator + 1);
+            values.put(java.net.URLDecoder.decode(key, StandardCharsets.UTF_8),
+                    java.net.URLDecoder.decode(value, StandardCharsets.UTF_8));
+        }
+        return values;
     }
 
     private static String enc(String s) {

@@ -63,10 +63,9 @@ public class InventoryDisplay  extends Module {
 
             int drawX = startX + col * (itemSize + spacing);
             int drawY = startY + row * (itemSize + spacing);
-            extractor.item(item, drawX, drawY);
-            if (!item.isEmpty() && item.getCount() > 1) {
-                String countText = String.valueOf(item.getCount());
-                extractor.itemDecorations(mc.font, item, drawX, drawY, countText);
+            if (!item.isEmpty()) {
+                extractor.item(mc.player, item, drawX, drawY, i + 1);
+                extractor.itemDecorations(mc.font, item, drawX, drawY);
             }
         }
     }

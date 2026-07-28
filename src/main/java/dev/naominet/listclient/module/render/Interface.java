@@ -103,7 +103,6 @@ public class Interface extends Module {
         int rowH = Math.max(9, lh);
         int band = rowH;
         int textPad = 3;
-        int suffixGap = 1;
         if (sortedModuleList != null) {
             for (Module m : sortedModuleList) {
                 // MusicPlayer is an entry keybind, not a HUD array item.
@@ -111,8 +110,9 @@ public class Interface extends Module {
 
                 String suffix = m.getSuffix() == null ? "" : m.getSuffix();
                 float nameW = listFont.width(m.getName());
-                float suffixW = suffix.isEmpty() ? 0f : suffixGap + listFont.width(suffix);
-                int rowW = (int) Math.ceil(nameW + suffixW) + textPad * 2;
+                float suffixGap = suffix.isEmpty() ? 0f : listFont.width(" ");
+                float suffixW = suffix.isEmpty() ? 0f : listFont.width(suffix);
+                int rowW = (int) Math.ceil(nameW + suffixGap + suffixW) + textPad * 2;
 
                 // animX: horizontal slide (0 = fully in, rowW+8 = off-screen).
                 // animY: 0..1 vertical reveal used to collapse hidden rows.

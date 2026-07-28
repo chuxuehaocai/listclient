@@ -656,7 +656,7 @@ public class NCMAPI {
 
     public List<NcmSong> getPlaylistTracks(long playlistId, int limit, int offset)
             throws IOException, InterruptedException {
-        int lim = Math.max(1, Math.min(limit, 50)); // hard cap – never pull a whole playlist at once
+        int lim = Math.max(1, Math.min(limit, 100));
         int off = Math.max(0, offset);
         JsonObject json = getJson("/playlist/track/all?id=" + playlistId
                 + "&limit=" + lim + "&offset=" + off);
@@ -711,43 +711,78 @@ public class NCMAPI {
      * Best-effort parse of homepage/block/page – extracts any song-like / playlist-like
      * resources buried in the block tree so the UI has something to show even when the
      * personalized endpoints are empty for guests.
+     * <p>
+     * Fetches all data sources IN PARALLEL to avoid sequential blocking.
      */
     public HomePageData getHomePage() throws IOException, InterruptedException {
         HomePageData page = new HomePageData();
-        // Keep the initial burst tiny. Covers are fetched lazily by the UI for
-        // whatever is actually on screen, not for the whole payload.
-        try {
-            page.banners = getBanners();
-            if (page.banners.size() > 5) {
-                page.banners = new ArrayList<>(page.banners.subList(0, 5));
-            }
-        } catch (Exception e) {
-            page.banners = new ArrayList<>();
-        }
-        try {
-            page.personalizedPlaylists = getPersonalizedPlaylists(6);
-        } catch (Exception e) {
-            page.personalizedPlaylists = new ArrayList<>();
-        }
-        try {
-            page.newSongs = getPersonalizedNewSongs(6);
-        } catch (Exception e) {
-            page.newSongs = new ArrayList<>();
-        }
-        if (hasCookie()) {
+
+        // Fetch all data sources in parallel using separate threads
+        Thread bannerThread = new Thread(() -> {
             try {
-                List<NcmSong> daily = getDailyRecommendSongs();
-                // UI only shows ~5; trim so we don't keep / paint-trigger the rest.
-                if (daily.size() > 8) {
-                    daily = new ArrayList<>(daily.subList(0, 8));
+                List<NcmBanner> banners = getBanners();
+                if (banners.size() > 5) {
+                    banners = new ArrayList<>(banners.subList(0, 5));
                 }
-                page.dailySongs = daily;
+                page.banners = banners;
             } catch (Exception e) {
-                page.dailySongs = new ArrayList<>();
+                page.banners = new ArrayList<>();
             }
-            // Skip daily playlists on first load – personalized cards already fill that slot.
-            page.dailyPlaylists = new ArrayList<>();
+        }, "ncm-home-banners");
+
+        Thread playlistsThread = new Thread(() -> {
+            try {
+                page.personalizedPlaylists = getPersonalizedPlaylists(6);
+            } catch (Exception e) {
+                page.personalizedPlaylists = new ArrayList<>();
+            }
+        }, "ncm-home-playlists");
+
+        Thread newSongsThread = new Thread(() -> {
+            try {
+                page.newSongs = getPersonalizedNewSongs(6);
+            } catch (Exception e) {
+                page.newSongs = new ArrayList<>();
+            }
+        }, "ncm-home-newsongs");
+
+        Thread dailySongsThread = null;
+        if (hasCookie()) {
+            dailySongsThread = new Thread(() -> {
+                try {
+                    List<NcmSong> daily = getDailyRecommendSongs();
+                    if (daily.size() > 8) {
+                        daily = new ArrayList<>(daily.subList(0, 8));
+                    }
+                    page.dailySongs = daily;
+                } catch (Exception e) {
+                    page.dailySongs = new ArrayList<>();
+                }
+            }, "ncm-home-daily");
         }
+
+        // Start all threads
+        bannerThread.start();
+        playlistsThread.start();
+        newSongsThread.start();
+        if (dailySongsThread != null) {
+            dailySongsThread.start();
+        }
+
+        // Wait for all threads to complete
+        try {
+            bannerThread.join();
+            playlistsThread.join();
+            newSongsThread.join();
+            if (dailySongsThread != null) {
+                dailySongsThread.join();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
+        }
+
+        page.dailyPlaylists = new ArrayList<>();
         return page;
     }
 
@@ -1004,7 +1039,7 @@ public class NCMAPI {
         );
         p.description = optString(o, "copywriter", optString(o, "description", ""));
         p.playCount = optLong(o, "playCount", optLong(o, "playcount", 0));
-        p.trackCount = optInt(o, "trackCount", optInt(o, "trackNumberUpdateTime", 0));
+        p.trackCount = optInt(o, "trackCount", 0);
         if (o.has("creator") && o.get("creator").isJsonObject()) {
             p.creatorName = optString(o.getAsJsonObject("creator"), "nickname", "");
         }

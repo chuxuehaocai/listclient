@@ -17,8 +17,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -38,17 +36,12 @@ public final class NcmAudioPlayer {
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "ncm-audio");
-        t.setDaemon(true);
-        return t;
-    });
-
     private final Object lock = new Object();
     /** Bumped on every play/stop so stale async work bails out. */
     private final AtomicLong generation = new AtomicLong(0);
 
     private Clip clip;
+    private volatile Thread worker;
     private volatile boolean playing;
     private volatile boolean loading;
     private volatile String lastError = "";
@@ -145,53 +138,63 @@ public final class NcmAudioPlayer {
             lastError = "空的播放地址";
             return;
         }
-        final long gen = generation.incrementAndGet();
-        stopInternal(false, false);
-        loading = true;
-        lastError = "";
-        durationMs = Math.max(0, knownDurationMs);
-        currentUrl = url;
 
-        executor.execute(() -> {
-            if (generation.get() != gen) {
-                return;
-            }
-            try {
-                byte[] data = download(url);
-                if (generation.get() != gen) {
-                    return;
-                }
-                synchronized (lock) {
-                    if (generation.get() != gen) {
-                        return;
-                    }
-                    // Ensure no leftover clip before opening a new one.
-                    closeClipOnly();
-                    openAndStart(data, knownDurationMs, gen);
-                }
-            } catch (Exception ex) {
-                if (generation.get() != gen) {
-                    return;
-                }
-                lastError = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
-                synchronized (lock) {
-                    if (generation.get() != gen) {
-                        return;
-                    }
-                    closeClipOnly();
-                    virtualMode = true;
-                    virtualOffsetMs = 0;
-                    virtualStartedAt = System.currentTimeMillis();
-                    playing = true;
-                    durationMs = Math.max(durationMs, knownDurationMs);
-                }
-                firePlaying(true);
-            } finally {
-                if (generation.get() == gen) {
-                    loading = false;
-                }
-            }
-        });
+        final long gen = generation.incrementAndGet();
+        Thread previousWorker = worker;
+        if (previousWorker != null) previousWorker.interrupt();
+
+        Clip oldClip;
+        synchronized (lock) {
+            oldClip = clip;
+            clip = null;
+            playing = false;
+            virtualMode = false;
+            virtualOffsetMs = 0;
+            loading = true;
+            lastError = "";
+            durationMs = Math.max(0, knownDurationMs);
+            currentUrl = url;
+        }
+
+        Thread nextWorker = new Thread(() -> runAudioWorker(
+                url, knownDurationMs, gen, oldClip), "ncm-audio-" + gen);
+        nextWorker.setDaemon(true);
+        worker = nextWorker;
+        nextWorker.start();
+    }
+
+    private void runAudioWorker(String url, long knownDurationMs, long gen, Clip oldClip) {
+        closeClip(oldClip);
+        if (!current(gen)) return;
+        try {
+            byte[] data = download(url);
+            if (!current(gen)) return;
+            openAndStart(data, knownDurationMs, gen);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        } catch (Exception ex) {
+            if (!current(gen)) return;
+            enterVirtualMode(knownDurationMs, gen, ex);
+        } finally {
+            if (generation.get() == gen) loading = false;
+        }
+    }
+
+    private boolean current(long gen) {
+        return !Thread.currentThread().isInterrupted() && generation.get() == gen;
+    }
+
+    private void enterVirtualMode(long knownDurationMs, long gen, Exception ex) {
+        synchronized (lock) {
+            if (!current(gen)) return;
+            virtualMode = true;
+            virtualOffsetMs = 0;
+            virtualStartedAt = System.currentTimeMillis();
+            playing = true;
+            durationMs = Math.max(Math.max(durationMs, knownDurationMs), 1);
+            lastError = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+        }
+        firePlaying(true);
     }
 
     public void pause() {
@@ -286,6 +289,17 @@ public final class NcmAudioPlayer {
             } catch (Exception ignored) {
             }
             clip = null;
+        }
+    }
+
+    private void closeClip(Clip clipToClose) {
+        if (clipToClose != null) {
+            try {
+                clipToClose.stop();
+                clipToClose.flush();
+                clipToClose.close();
+            } catch (Exception ignored) {
+            }
         }
     }
 

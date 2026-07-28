@@ -23,20 +23,31 @@ repositories {
     // for more information about repositories.
 }
 
+configurations {
+    bundledLibrary
+    implementation.extendsFrom(bundledLibrary)
+}
+
+def bundledCoordinates = [
+        'org.msgpack:msgpack-core:0.9.0',
+        'com.googlecode.soundlibs:mp3spi:1.9.5.4',
+        'com.googlecode.soundlibs:jlayer:1.0.1.4',
+        'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
+]
+
 dependencies {
     // To change the versions see the gradle.properties file
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-    implementation 'org.msgpack:msgpack-core:0.9.0'
-    include 'org.msgpack:msgpack-core:0.9.0'
-
-    // MP3 decode SPI for javax.sound (NetEase stream URLs are typically MP3)
-    implementation 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
-    include 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
-    include 'com.googlecode.soundlibs:jlayer:1.0.1.4'
-    include 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
+    // Third-party runtime libraries distributed with the Fabric mod. Declare
+    // every coordinate directly so compile/runtime and release Jar-in-Jar stay
+    // identical even when Maven transitive metadata changes.
+    bundledCoordinates.each { coordinate ->
+        bundledLibrary coordinate
+        include coordinate
+    }
 }
 
 processResources {
@@ -79,6 +90,31 @@ jar {
     from("LICENSE") {
         rename { "${it}_${project.archives_base_name}" }
     }
+}
+
+tasks.register("verifyBundledLibraries") {
+    dependsOn tasks.named("jar")
+    doLast {
+        def output = tasks.named("jar").get().archiveFile.get().asFile
+        def expected = [
+                'dev/naominet/listclient/ui/theme/MonetColor.class',
+                'dev/naominet/listclient/ui/theme/MonetTheme.class',
+                'META-INF/jars/msgpack-core-0.9.0.jar',
+                'META-INF/jars/mp3spi-1.9.5.4.jar',
+                'META-INF/jars/jlayer-1.0.1.4.jar',
+                'META-INF/jars/tritonus-share-0.3.7.4.jar'
+        ]
+        def missing = expected.findAll { path ->
+            zipTree(output).matching { include path }.files.isEmpty()
+        }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Release JAR is missing bundled runtime entries: ${missing.join(', ')}")
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn tasks.named("verifyBundledLibraries")
 }
 
 // configure the maven publication

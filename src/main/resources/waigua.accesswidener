@@ -7,3 +7,4 @@ accessible field net/minecraft/client/Minecraft user Lnet/minecraft/client/User;
 mutable field net/minecraft/client/Minecraft user Lnet/minecraft/client/User;
 accessible field net/minecraft/client/Minecraft profileFuture Ljava/util/concurrent/CompletableFuture;
 mutable field net/minecraft/client/Minecraft profileFuture Ljava/util/concurrent/CompletableFuture;
+accessible field net/minecraft/client/Minecraft rightClickDelay I

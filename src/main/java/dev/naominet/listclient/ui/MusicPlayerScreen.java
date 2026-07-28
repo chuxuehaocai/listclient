@@ -40,10 +40,16 @@ public class MusicPlayerScreen extends Screen {
     private static final int HEADER_H = 16;
     private static final int PLAYER_H = 34;
     private static final int PAD = 6;
+    private static final float LYRIC_ROW_PITCH = 22f;
+    private static final int SEEK_X = 100;
+    private static final int SEEK_W = PANEL_W - 180;
+    private static final int VOLUME_X = PANEL_W - 60;
+    private static final int VOLUME_W = 40;
 
     /** M3 type scale (MiSans) – every string on this screen goes through TTF. */
     private final TTFFontRenderer titleFont = M3.title();
     private final TTFFontRenderer bodyFont = M3.body();
+    private final TTFFontRenderer lyricFont = TTFFontRenderer.medium(18);
     private final TTFFontRenderer labelFont = M3.label();
     private final TTFFontRenderer smallFont = M3.labelSmall();
 
@@ -57,8 +63,13 @@ public class MusicPlayerScreen extends Screen {
 
     /** Dragging the floating panel by its header. */
     private boolean draggingPanel;
+    private TrackDrag trackDrag = TrackDrag.NONE;
     private int dragOffX;
     private int dragOffY;
+
+    private enum TrackDrag {
+        NONE, SEEK, VOLUME
+    }
 
     /** Open animation: panel scales in from 92% over ~250ms after construction. */
     private final long openedAt = Util.getMillis();
@@ -333,7 +344,7 @@ public class MusicPlayerScreen extends Screen {
         if (!mp.lyricsFollowPlayback && now - mp.lyricsManualAt > 3500L) {
             mp.lyricsFollowPlayback = true;
         }
-        float target = active * 22f;
+        float target = active * LYRIC_ROW_PITCH;
         if (!mp.lyricsFollowPlayback) {
             mp.lyricMotionAt = now;
             return;
@@ -341,18 +352,14 @@ public class MusicPlayerScreen extends Screen {
         float dt = mp.lyricMotionAt == 0L ? 1f / 60f
                 : Math.min(0.05f, Math.max(0.001f, (now - mp.lyricMotionAt) / 1000f));
         mp.lyricMotionAt = now;
-        float displacement = target - mp.lyricScroll;
-        mp.lyricScrollVelocity += displacement * 105f * dt;
-        mp.lyricScrollVelocity *= (float) Math.exp(-14f * dt);
-        mp.lyricScroll += mp.lyricScrollVelocity * dt;
-        if (Math.abs(displacement) < 0.02f && Math.abs(mp.lyricScrollVelocity) < 0.02f) {
-            mp.lyricScroll = target;
-            mp.lyricScrollVelocity = 0f;
-        }
+        float k = 1f - (float) Math.exp(-10f * dt);
+        mp.lyricScroll += (target - mp.lyricScroll) * k;
+        mp.lyricScrollVelocity = 0f;
+        if (Math.abs(target - mp.lyricScroll) < 0.02f) mp.lyricScroll = target;
     }
 
     private void drawLyrics(GuiGraphicsExtractor g, int x, int y, int w, int h) {
-        M3.lyricBackground(g, x, y, w, h);
+        M3.lyricBackground(g, x, y, w, h, 0, mp.currentSong != null);
         int backX = x + 7;
         int backY = y + 6;
         boolean backHover = isMouseOver(backX, backY, 34, 14);
@@ -383,17 +390,19 @@ public class MusicPlayerScreen extends Screen {
         }
 
         float centerY = y + h * 0.46f;
+        float visualIndex = mp.lyricScroll / LYRIC_ROW_PITCH;
         for (int i = 0; i < mp.lyrics.size(); i++) {
-            float lineY = centerY + i * 22f - mp.lyricScroll;
+            float lineY = centerY + i * LYRIC_ROW_PITCH - mp.lyricScroll;
             if (lineY < y - 24 || lineY > y + h + 12) continue;
-            float distance = Math.abs(i - active);
-            float focus = Math.max(0f, 1f - distance / 4f);
-            float scale = i == active ? 1.08f : 0.92f + focus * 0.06f;
-            int alpha = i == active ? 255 : Math.max(32, (int) (150 * focus));
-            int color = i == active ? M3.ON_SURFACE : M3.withAlpha(M3.ON_SURFACE_VARIANT, alpha);
-            String text = trimToWidth(i == active ? titleFont : bodyFont, mp.lyrics.get(i).text, w - 28);
-            TTFFontRenderer font = i == active ? titleFont : bodyFont;
-            float textX = x + 12 + (1f - focus) * 5f;
+            float distance = Math.abs(i - visualIndex);
+            float focus = active < 0 ? 0f : Math.max(0f, 1f - distance);
+            float ambient = Math.max(0f, 1f - distance / 4f);
+            float scale = (0.92f + focus * 0.16f + ambient * 0.03f) * 0.5f;
+            int alpha = Math.max(32, (int) (130 * ambient + 125 * focus));
+            int color = M3.lerp(M3.ON_SURFACE_VARIANT, M3.ON_SURFACE, focus);
+            String text = trimToWidth(lyricFont, mp.lyrics.get(i).text,
+                    Math.round((w - 28) / scale));
+            float textX = x + 12 + (1f - ambient) * 5f;
             int rowY = (int) lineY - 9;
             String lyricKey = "lyric:" + i;
             if (isMouseOver(x + 6, rowY, w - 12, 18)) {
@@ -404,16 +413,16 @@ public class MusicPlayerScreen extends Screen {
             g.pose().pushMatrix();
             g.pose().translate(textX, lineY);
             g.pose().scale(scale, scale);
-            font.drawString(g, text, 0, -font.lineHeight() / 2f, color);
+            lyricFont.drawString(g, text, 0, -lyricFont.lineHeight() / 2f, M3.withAlpha(color, alpha));
             g.pose().popMatrix();
             addClick(x + 6, rowY, w - 12, 18, lyricKey);
         }
 
         int fadeH = 18;
         for (int i = 0; i < fadeH; i++) {
-            int a = (int) (150f * (1f - i / (float) fadeH));
-            fill(g, x, y + i, w, 1, M3.withAlpha(M3.SURFACE_CONTAINER_LOW, a));
-            fill(g, x, y + h - 1 - i, w, 1, M3.withAlpha(M3.SURFACE_CONTAINER_LOW, a));
+            int a = (int) (130f * (1f - i / (float) fadeH));
+            fill(g, x, y + i, w, 1, M3.withAlpha(M3.SURFACE_CONTAINER_LOWEST, a));
+            fill(g, x, y + h - 1 - i, w, 1, M3.withAlpha(M3.SURFACE_CONTAINER_LOWEST, a));
         }
     }
 
@@ -734,7 +743,7 @@ public class MusicPlayerScreen extends Screen {
 
         int listY = y + 44;
         if (mp.playlistTracks.isEmpty()) {
-            smallFont.drawString(g, mp.busy ? Lang.tr("music.playlist_loading") : Lang.tr("music.playlist_empty"),
+            smallFont.drawString(g, mp.playlistLoading ? Lang.tr("music.playlist_loading") : Lang.tr("music.playlist_empty"),
                     x + PAD, listY, M3.ON_SURFACE_VARIANT);
             return;
         }
@@ -742,7 +751,7 @@ public class MusicPlayerScreen extends Screen {
         button(g, x + PAD, y + 22, 52, 14, Lang.tr("music.play_all"), M3.PRIMARY, M3.ON_PRIMARY, "pl_play_all");
         if (mp.playlistHasMore) {
             button(g, x + PAD + 58, y + 22, 52, 14,
-                    mp.busy ? Lang.tr("music.loading_short") : Lang.tr("music.load_more"),
+                    mp.playlistLoading ? Lang.tr("music.loading_short") : Lang.tr("music.load_more"),
                     M3.SECONDARY_CONTAINER, M3.ON_SECONDARY_CONTAINER, "pl_load_more");
         }
 
@@ -757,9 +766,14 @@ public class MusicPlayerScreen extends Screen {
         g.enableScissor(x, listY, x + w, y + h);
         raiseZoneClipTop(listY);
         try {
-            // Only touch rows near the viewport (covers deferred until visible).
-            int first = Math.max(0, scroll / rowH - 1);
-            int last = Math.min(mp.playlistTracks.size() - 1, (scroll + viewH) / rowH + 1);
+            // Keep one buffered row around the viewport, but trigger prefetch only
+            // from rows that are actually visible.
+            int firstVisible = Math.max(0, scroll / rowH);
+            int lastVisible = Math.min(mp.playlistTracks.size() - 1,
+                    Math.max(firstVisible, (scroll + Math.max(0, viewH - 1)) / rowH));
+            int first = Math.max(0, firstVisible - 1);
+            int last = Math.min(mp.playlistTracks.size() - 1, lastVisible + 1);
+            mp.observePlaylistVisibleLastIndex(lastVisible);
             for (int i = first; i <= last; i++) {
                 int ry = listY + i * rowH - scroll;
                 if (ry + rowH < listY || ry > y + h) continue;
@@ -877,7 +891,7 @@ public class MusicPlayerScreen extends Screen {
 
         int textX = cx + coverSize + 5;
         int midX = px + PANEL_W / 2;
-        int barX = px + 100;
+        int barX = px + SEEK_X;
         if (mp.currentSong != null) {
             // Pixel budget: the title must stop before the prev button (midX-40).
             String name = trimToWidth(titleFont, mp.currentSong.name, midX - 40 - 4 - textX);
@@ -899,12 +913,18 @@ public class MusicPlayerScreen extends Screen {
         drawBtn(g, midX - 12, btnY, 18, 12, mp.audio.isPlaying() ? Icons.PAUSE : Icons.PLAY_ARROW, "toggle");
         drawBtn(g, midX + 18, btnY, 14, 12, Icons.SKIP_NEXT, "next");
 
-        int barW = PANEL_W - 180;
-        int barY = py + 22;
-        int barH = 6;
+        int barW = SEEK_W;
+        int barY = py + 24;
+        int barH = isMouseOver(barX - 2, barY - 6, barW + 4, 14)
+                || trackDrag == TrackDrag.SEEK ? 4 : 3;
         float prog = mp.audio.progress();
-        M3.wavyProgress(g, barX, barY, barW, barH, prog);
-        addClick(barX - 2, barY - 4, barW + 4, barH + 8, "seek");
+        M3.linearProgress(g, barX, barY, barW, barH, prog);
+        if (trackDrag == TrackDrag.SEEK || isMouseOver(barX - 2, barY - 6, barW + 4, 14)) {
+            int thumbX = barX + Math.round(barW * Math.max(0f, Math.min(1f, prog)));
+            M3.roundRect(g, thumbX - 2, barY - 2, 4, barH + 4,
+                    M3.pill(barH + 4), M3.PRIMARY);
+        }
+        addClick(barX - 2, barY - 7, barW + 4, 18, "seek");
 
         String tLeft = MusicPlayer.formatMs(mp.audio.positionMs());
         String tRight = mp.currentSong == null ? "0:00"
@@ -913,11 +933,18 @@ public class MusicPlayerScreen extends Screen {
                 M3.ON_SURFACE_VARIANT);
         smallFont.drawString(g, tRight, barX + barW + 4, barY - 3, M3.ON_SURFACE_VARIANT);
 
-        int vx = px + PANEL_W - 60;
+        int vx = px + VOLUME_X;
         Icons.draw(g, Icons.VOLUME_UP, 8, vx - 16, py + 6, M3.ON_SURFACE_VARIANT);
-        fill(g, vx, py + 10, 40, 3, M3.SURFACE_CONTAINER_HIGHEST);
-        fill(g, vx, py + 10, (int) (40 * mp.volume), 3, M3.PRIMARY);
-        addClick(vx - 2, py + 6, 44, 12, "volume");
+        int volumeY = py + 10;
+        int volumeH = isMouseOver(vx - 2, py + 3, VOLUME_W + 4, 15)
+                || trackDrag == TrackDrag.VOLUME ? 4 : 3;
+        M3.linearProgress(g, vx, volumeY, VOLUME_W, volumeH, mp.volume);
+        if (trackDrag == TrackDrag.VOLUME || isMouseOver(vx - 2, py + 3, VOLUME_W + 4, 15)) {
+            int thumbX = vx + Math.round(VOLUME_W * Math.max(0f, Math.min(1f, mp.volume)));
+            M3.roundRect(g, thumbX - 2, volumeY - 2, 4, volumeH + 4,
+                    M3.pill(volumeH + 4), M3.PRIMARY);
+        }
+        addClick(vx - 2, py + 3, VOLUME_W + 4, 15, "volume");
 
         int mx = px + PANEL_W - 48;
         String modeIcon = mp.repeatOne ? Icons.REPEAT_ONE : (mp.shuffle ? Icons.SHUFFLE : Icons.REPEAT);
@@ -988,14 +1015,17 @@ public class MusicPlayerScreen extends Screen {
             return true;
         }
         if ("seek".equals(hit.id)) {
-            int barX = panelX + 100;
-            int barW = PANEL_W - 180;
-            mp.seekByRatio((mx - barX) / (float) barW);
+            if (button == 0) {
+                trackDrag = TrackDrag.SEEK;
+                updateSeek(mx);
+            }
             return true;
         }
         if ("volume".equals(hit.id)) {
-            int vx = panelX + PANEL_W - 60;
-            mp.setVolumeByRatio((mx - vx) / 40f);
+            if (button == 0) {
+                trackDrag = TrackDrag.VOLUME;
+                updateVolume(mx);
+            }
             return true;
         }
 
@@ -1009,35 +1039,38 @@ public class MusicPlayerScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
-        draggingPanel = false;
+        if (event.button() == 0) {
+            draggingPanel = false;
+            trackDrag = TrackDrag.NONE;
+        }
         return super.mouseReleased(event);
     }
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
+        int mx = (int) event.x();
+        if (trackDrag == TrackDrag.SEEK) {
+            updateSeek(mx);
+            return true;
+        }
+        if (trackDrag == TrackDrag.VOLUME) {
+            updateVolume(mx);
+            return true;
+        }
         if (draggingPanel) {
-            panelX = clamp((int) event.x() - dragOffX, 0, Math.max(0, this.width - PANEL_W));
+            panelX = clamp(mx - dragOffX, 0, Math.max(0, this.width - PANEL_W));
             panelY = clamp((int) event.y() - dragOffY, 0, Math.max(0, this.height - PANEL_H));
             return true;
         }
-        // scrub while dragging on seek / volume
-        int mx = (int) event.x();
-        int my = (int) event.y();
-        ClickZone hit = hitTest(mx, my);
-        if (hit != null) {
-            if ("seek".equals(hit.id)) {
-                int barX = panelX + 100;
-                int barW = PANEL_W - 180;
-                mp.seekByRatio((mx - barX) / (float) barW);
-                return true;
-            }
-            if ("volume".equals(hit.id)) {
-                int vx = panelX + PANEL_W - 60;
-                mp.setVolumeByRatio((mx - vx) / 40f);
-                return true;
-            }
-        }
         return super.mouseDragged(event, dx, dy);
+    }
+
+    private void updateSeek(int mouseX) {
+        mp.seekByRatio((mouseX - (panelX + SEEK_X)) / (float) SEEK_W);
+    }
+
+    private void updateVolume(int mouseX) {
+        mp.setVolumeByRatio((mouseX - (panelX + VOLUME_X)) / (float) VOLUME_W);
     }
 
     @Override
@@ -1057,7 +1090,7 @@ public class MusicPlayerScreen extends Screen {
         if (mp.page == Page.LYRICS) {
             mp.lyricsFollowPlayback = false;
             mp.lyricsManualAt = Util.getMillis();
-            float maxScroll = Math.max(0f, (mp.lyrics.size() - 1) * 22f);
+            float maxScroll = Math.max(0f, (mp.lyrics.size() - 1) * LYRIC_ROW_PITCH);
             mp.lyricScroll = Math.max(0f, Math.min(maxScroll, mp.lyricScroll + delta));
             mp.lyricScrollVelocity = 0f;
             return true;

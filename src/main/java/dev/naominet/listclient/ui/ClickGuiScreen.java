@@ -503,6 +503,7 @@ public class ClickGuiScreen extends Screen {
             return y + ROW_H;
         }
         if (v instanceof Mode mode) {
+            addZone(x, y, w, ROW_H, () -> cycleMode(mode), null);
             int cx = x + w;
             for (int i = mode.getModes().length - 1; i >= 0; i--) {
                 String option = mode.getModes()[i];
@@ -534,6 +535,20 @@ public class ClickGuiScreen extends Screen {
             return y + ROW_H;
         }
         return y + ROW_H;
+    }
+
+    private void cycleMode(Mode mode) {
+        String[] modes = mode.getModes();
+        if (modes.length == 0) {
+            return;
+        }
+        for (int i = 0; i < modes.length; i++) {
+            if (mode.isCurrentMode(modes[i])) {
+                mode.setMode(modes[(i + 1) % modes.length]);
+                return;
+            }
+        }
+        mode.setMode(modes[0]);
     }
 
     /** M3 switch: 24×12 pill track, animated thumb; container-role change on toggle. */
@@ -650,6 +665,9 @@ public class ClickGuiScreen extends Screen {
         int my = (int) event.y();
         if (event.button() != 0) {
             return super.mouseClicked(event, doubleClick);
+        }
+        if (Util.getMillis() - openedAt < 250) {
+            return true;
         }
         if (binding != null) {
             // Clicking anywhere cancels key listening.

@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.naominet.listclient.auth.MicrosoftAuth;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.User;
 
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 /**
  * Account manager: keeps typed account records (offline names and Microsoft
@@ -70,6 +72,33 @@ public final class AccountManager {
         return u == null ? "" : u.getName();
     }
 
+    /**
+     * Returns whether this saved account represents the active Minecraft
+     * profile. Usernames are intentionally not used: an offline account and a
+     * Microsoft account may legitimately share the same display name. Access
+     * tokens are also excluded because Minecraft rotates them during login.
+     */
+    public boolean isCurrent(Account account) {
+        if (account == null) return false;
+        User user = Minecraft.getInstance().getUser();
+        return user != null && account.uuidObject().equals(user.getProfileId());
+    }
+
+    /**
+     * Returns the single stored record that represents the active session.
+     * The first matching list entry wins so duplicated persisted records can
+     * never result in more than one selected account row.
+     */
+    public Account currentAccount() {
+        ensureLoaded();
+        for (Account account : accounts) {
+            if (isCurrent(account)) {
+                return account;
+            }
+        }
+        return null;
+    }
+
     /** Valid Minecraft offline name: 3-16 word characters. */
     public boolean isValidName(String name) {
         return name != null && name.matches("\\w{3,16}");
@@ -92,8 +121,8 @@ public final class AccountManager {
     }
 
     /**
-     * Adds (or refreshes) a Microsoft account after a completed device-code
-     * login, saves, and immediately switches the session to it.
+     * Adds (or refreshes) a Microsoft account after browser OAuth completes,
+     * saves it, and immediately switches the session to it.
      */
     public void addMicrosoft(String uuid, String name, String mcToken, String msRefresh) {
         ensureLoaded();
@@ -114,6 +143,49 @@ public final class AccountManager {
     /** Hot-swaps the running session to this account. */
     public void switchTo(Account account) {
         if (account == null) return;
+        applySession(account);
+    }
+
+    /**
+     * Switches to an account, refreshing Microsoft credentials through the
+     * legacy-compatible OAuth backend first whenever a refresh token exists.
+     */
+    public void login(Account account, Consumer<Account> onSuccess, Consumer<String> onError) {
+        if (account == null) return;
+        ensureLoaded();
+        Consumer<Account> successCallback = onSuccess == null ? ignored -> { } : onSuccess;
+        Consumer<String> errorCallback = onError == null ? ignored -> { } : onError;
+        if (!account.microsoft()) {
+            applySession(account);
+            successCallback.accept(account);
+            return;
+        }
+
+        MicrosoftAuth auth = new MicrosoftAuth();
+        Consumer<MicrosoftAuth.Result> success = result -> {
+            Account refreshed = replaceMicrosoft(account, result);
+            applySession(refreshed);
+            successCallback.accept(refreshed);
+        };
+        if (account.msRefresh() != null && !account.msRefresh().isBlank()) {
+            auth.startRefresh(account.msRefresh(), success, errorCallback);
+        } else {
+            auth.startMinecraftToken(account.mcToken(), success, errorCallback);
+        }
+    }
+
+    private Account replaceMicrosoft(Account oldAccount, MicrosoftAuth.Result result) {
+        Account refreshed = new Account(result.name(), result.uuid(), Type.MICROSOFT,
+                result.mcAccessToken(), result.msRefreshToken().isBlank()
+                ? oldAccount.msRefresh() : result.msRefreshToken());
+        accounts.remove(oldAccount);
+        accounts.removeIf(a -> a.microsoft() && sameUuid(a.uuid(), refreshed.uuid()));
+        accounts.add(refreshed);
+        save();
+        return refreshed;
+    }
+
+    private void applySession(Account account) {
         Minecraft mc = Minecraft.getInstance();
         User user = account.microsoft()
                 ? new User(account.name(), account.uuidObject(), account.mcToken(),

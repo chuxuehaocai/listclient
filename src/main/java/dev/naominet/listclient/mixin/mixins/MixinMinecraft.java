@@ -1,6 +1,8 @@
 package dev.naominet.listclient.mixin.mixins;
 
 import dev.naominet.listclient.core.ListClient;
+import dev.naominet.listclient.eventBus.EventManager;
+import dev.naominet.listclient.eventBus.events.EventPreTick;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -61,5 +63,13 @@ public class MixinMinecraft {
     )
     public void onClose(CallbackInfo ci) {
         ListClient.instance.stop();
+    }
+
+    @Inject(
+            at = @At("HEAD"),
+            method = "runTick"
+    )
+    public void onPreTick(CallbackInfo ci) {
+        EventManager.instance.call(new EventPreTick());
     }
 }

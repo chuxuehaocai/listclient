@@ -8,7 +8,7 @@ import dev.naominet.listclient.eventBus.EventTarget;
 import dev.naominet.listclient.eventBus.events.EventPacket;
 import dev.naominet.listclient.manager.ModuleManager;
 import dev.naominet.listclient.module.misc.NoCommands;
-import dev.naominet.listclient.utils.ClientUtils;
+import dev.naominet.listclient.ui.notification.NotificationManager;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundPlayerChatPacket;
 
@@ -51,7 +51,7 @@ public class CommandManager {
                     return true;
                 })
                 .orElseGet(() -> {
-                    ClientUtils.sendMessage("\u00A77Command \"\u00a7c" + s + "\u00a77\" not found.");
+                    NotificationManager.instance.error("Command \"" + s + "\" not found.");
                     return false;
                 });
     }

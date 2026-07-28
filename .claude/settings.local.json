@@ -15,7 +15,12 @@
       "Bash(javap -public -cp minecraft-merged-deobf-26.2.jar com.mojang.blaze3d.opengl.GlStateManager)",
       "Bash(javap -c -p \".gradle\\\\loom-cache\\\\minecraftMaven\\\\net\\\\minecraft\\\\minecraft-merged-043a8b3edf\\\\26.2\\\\minecraft-merged-043a8b3edf-26.2.jar\")",
       "Bash(dir \"build\\\\tmp-javap\")",
-      "Bash(dir \"build\\\\tmp-javap\\\\net\\\\minecraft\\\\client\\\\renderer\\\\texture\")"
+      "Bash(dir \"build\\\\tmp-javap\\\\net\\\\minecraft\\\\client\\\\renderer\\\\texture\")",
+      "Skill(claude-api)",
+      "PowerShell(.\\\\gradlew.bat compileJava)",
+      "PowerShell($jar='E:\\\\projects\\\\listclient\\\\.gradle\\\\loom-cache\\\\minecraftMaven\\\\net\\\\minecraft\\\\minecraft-merged-043a8b3edf\\\\26.2\\\\minecraft-merged-043a8b3edf-26.2.jar'; javap -classpath $jar -p net.minecraft.client.gui.GuiGraphicsExtractor; javap -classpath $jar -p net.minecraft.client.gui.Hud)",
+      "Bash(git *)",
+      "PowerShell($jar='E:\\\\projects\\\\listclient\\\\.gradle\\\\loom-cache\\\\minecraftMaven\\\\net\\\\minecraft\\\\minecraft-merged-043a8b3edf\\\\26.2\\\\minecraft-merged-043a8b3edf-26.2.jar'; javap -classpath $jar -p net.minecraft.client.renderer.state.gui.GuiRenderState; javap -classpath $jar -p net.minecraft.client.renderer.state.gui.GuiItemRenderState; javap -classpath $jar -p net.minecraft.client.renderer.item.ItemModelResolver)"
     ]
   },
   "enabledMcpjsonServers": [

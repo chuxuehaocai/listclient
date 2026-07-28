@@ -2,6 +2,7 @@ package dev.naominet.listclient.mixin.mixins;
 
 import dev.naominet.listclient.eventBus.EventManager;
 import dev.naominet.listclient.eventBus.events.EventRender2D;
+import dev.naominet.listclient.ui.hud.MaterialHotbarRenderer;
 import dev.naominet.listclient.utils.ClientUtils;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -13,15 +14,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(Hud.class)
 public class MixinHud {
+    @Inject(method = "extractItemHotbar", at = @At("HEAD"), cancellable = true)
+    private void listclient$extractMaterialHotbar(final GuiGraphicsExtractor graphics,
+                                                  final DeltaTracker deltaTracker,
+                                                  CallbackInfo ci) {
+        ci.cancel();
+        MaterialHotbarRenderer.render(graphics, deltaTracker);
+    }
+
     @Inject(
             at = @At("RETURN"),
-            method = "extractRenderState",
-            cancellable = true)
+            method = "extractRenderState")
     private void extractRenderState(final GuiGraphicsExtractor graphics, final DeltaTracker deltaTracker, CallbackInfo ci) {
         ClientUtils.runTasks();
-        EventRender2D eventRender2D = new EventRender2D(graphics, deltaTracker);
-
-        EventManager.instance.call(eventRender2D);
-        if(eventRender2D.isCancelled()) ci.cancel();
+        EventManager.instance.call(new EventRender2D(graphics, deltaTracker));
     }
 }
