@@ -18,6 +18,7 @@ import dev.naominet.listclient.ui.theme.M3;
 import dev.naominet.listclient.ui.theme.MonetColor;
 import dev.naominet.listclient.ui.theme.MonetTheme;
 import dev.naominet.listclient.ui.theme.Ripple;
+import dev.naominet.listclient.utils.DynamicImageUtils;
 import dev.naominet.listclient.utils.Lang;
 import dev.naominet.listclient.utils.MouseData;
 import dev.naominet.listclient.utils.NcmAudioPlayer;
@@ -29,7 +30,6 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.resources.Identifier;
 
 import java.awt.Color;
-import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -956,7 +956,7 @@ public class MusicPlayer extends Module {
         // extract the Monet seed immediately so the theme updates without waiting for
         // the detail-enrichment thread (which early-returns when metadata is complete).
         if (song.coverUrl != null && !song.coverUrl.isEmpty()) {
-            extractSeedAsync(song.coverUrl);
+            extractSeedAsync(song.coverUrl, request);
         }
         lyrics = new CopyOnWriteArrayList<>();
         lyricsLoading = true;
@@ -997,7 +997,7 @@ public class MusicPlayer extends Module {
                 full.playUrl = song.playUrl;
                 currentSong = full;
                 if (index < playQueue.size()) playQueue.set(index, full);
-                extractSeedAsync(full.coverUrl);
+                extractSeedAsync(full.coverUrl, request);
             });
         }, ex -> {
             // Queue metadata is sufficient for playback; detail is enrichment only.
@@ -1062,7 +1062,7 @@ public class MusicPlayer extends Module {
      * failure (download, decode, empty image) is swallowed – a bad cover must
      * never crash or spam the theme.
      */
-    private void extractSeedAsync(String coverUrl) {
+    private void extractSeedAsync(String coverUrl, long request) {
         if (coverUrl == null || coverUrl.isEmpty()) {
             return;
         }
@@ -1071,7 +1071,7 @@ public class MusicPlayer extends Module {
             if (b == null || b.length == 0) {
                 return null;
             }
-            try (NativeImage img = NativeImage.read(new ByteArrayInputStream(b))) {
+            try (NativeImage img = DynamicImageUtils.decodeBytes(b)) {
                 int w = img.getWidth();
                 int h = img.getHeight();
                 if (w <= 0 || h <= 0) {
@@ -1080,7 +1080,7 @@ public class MusicPlayer extends Module {
                 return MonetColor.seedFromPixels(img.getPixels(), w, h);
             }
         }, seed -> {
-            if (seed != null) {
+            if (seed != null && playbackRequest.get() == request) {
                 MonetTheme.requestSeed(seed);
             }
         }, ex -> {

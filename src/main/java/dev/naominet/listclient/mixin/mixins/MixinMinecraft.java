@@ -3,16 +3,20 @@ package dev.naominet.listclient.mixin.mixins;
 import dev.naominet.listclient.core.ListClient;
 import dev.naominet.listclient.eventBus.EventManager;
 import dev.naominet.listclient.eventBus.events.EventPreTick;
+import dev.naominet.listclient.manager.ModuleManager;
+import dev.naominet.listclient.module.render.ESP;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.resources.language.I18n;
+import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import static net.minecraft.client.Minecraft.checkModStatus;
 
@@ -63,6 +67,18 @@ public class MixinMinecraft {
     )
     public void onClose(CallbackInfo ci) {
         ListClient.instance.stop();
+    }
+
+    @Inject(
+            at = @At("HEAD"),
+            method = "shouldEntityAppearGlowing",
+            cancellable = true
+    )
+    private void applyEspOutline(Entity entity, CallbackInfoReturnable<Boolean> cir) {
+        ESP esp = ModuleManager.instance.getModuleByClazz(ESP.class);
+        if (esp != null && esp.isEnable() && esp.shouldOutline(entity)) {
+            cir.setReturnValue(true);
+        }
     }
 
     @Inject(

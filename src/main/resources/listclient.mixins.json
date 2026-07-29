@@ -15,6 +15,7 @@
     "mixins.MixinGui",
     "mixins.MixinHud",
     "mixins.MixinKeyboardHandler",
+    "mixins.MixinLightmapRenderStateExtractor",
     "mixins.MixinLivingEntity",
     "mixins.MixinLivingEntityRenderer",
     "mixins.MixinLocalPlayer",

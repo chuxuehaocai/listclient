@@ -42,28 +42,23 @@ public class Velocity extends Module {
             event.setX(event.getX() * (h.intValue() / 100.0));
             event.setY(event.getY() * (v.intValue() / 100.0));
             event.setZ(event.getZ() * (h.intValue() / 100.0));
-            setSuffix("Custom " + h.intValue() + "% " + v.intValue() + "%");
         } else if (mode.isCurrentMode("Hypixel")) {
             Vec3 current = mc.player.getDeltaMovement();
             event.setX(current.x);
             event.setZ(current.z);
-            setSuffix(mode.getValue());
         } else if (mode.isCurrentMode("Prediction")) {
             // Simplified: cancel the velocity packet entirely
             event.setCancelled(true);
-            setSuffix(mode.getValue());
         } else if (mode.isCurrentMode("CubeCraft")) {
             // Let the velocity apply, then reverse+halve after 2 ticks
             reset();
             handlingVelocity = true;
-            setSuffix(mode.getValue());
-        } else {
-            setSuffix(mode.getValue());
         }
     }
 
     @EventTarget
     public void onMotionPre(EventPlayerMotionPreUpdate event) {
+        setSuffix(mode.getValue());
         if (!mode.isCurrentMode("CubeCraft") || !handlingVelocity || mc.player == null) {
             return;
         }
