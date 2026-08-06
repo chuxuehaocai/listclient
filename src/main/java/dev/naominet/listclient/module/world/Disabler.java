@@ -3,6 +3,7 @@ package dev.naominet.listclient.module.world;
 import dev.naominet.listclient.eventBus.EventTarget;
 import dev.naominet.listclient.eventBus.events.EventPacket;
 import dev.naominet.listclient.eventBus.events.EventPreTick;
+import dev.naominet.listclient.eventBus.events.EventWorldChange;
 import dev.naominet.listclient.extension.ConnectionExtension;
 import dev.naominet.listclient.module.Category;
 import dev.naominet.listclient.module.Module;
@@ -27,6 +28,7 @@ public class Disabler extends Module {
     }
 
     public void onEnable(){
+        cachedPacketList.clear();
         if(mc.hasSingleplayerServer()){
             NotificationManager.instance.show(NotificationType.ERROR, "Disabler can't be enabled in singleplayer.", 1000);
             setEnable(false);
@@ -66,5 +68,10 @@ public class Disabler extends Module {
                 e.setCancelled(true);
             }
         }
+    }
+
+    @EventTarget
+    public void onWorldChange(EventWorldChange e){
+        cachedPacketList.clear();
     }
 }
