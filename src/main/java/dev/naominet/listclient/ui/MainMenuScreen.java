@@ -7,6 +7,7 @@ import dev.naominet.listclient.ui.theme.MonetTheme;
 import dev.naominet.listclient.ui.theme.Ripple;
 import dev.naominet.listclient.utils.AnimationUtils;
 import dev.naominet.listclient.utils.Lang;
+import dev.naominet.listclient.utils.RenderUtils;
 import dev.naominet.listclient.utils.font.TTFFontRenderer;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
@@ -53,6 +54,8 @@ import java.util.function.BooleanSupplier;
  */
 public class MainMenuScreen extends TitleScreen {
 
+    private static final int BACKGROUND_WIDTH = 10080;
+    private static final int BACKGROUND_HEIGHT = 5760;
     private static final String DEMO_LEVEL_ID = "Demo_World";
 
     private static final int PANEL_W = 176;
@@ -154,9 +157,9 @@ public class MainMenuScreen extends TitleScreen {
 
         fade = clamp01((Util.getMillis() - openedAt) / 420f);
 
-        extractPanorama(g, delta);
-        // Frosted glass: blur the panorama, then a light scrim for text contrast.
-        M3.blurBehind(g);
+        drawBackground(g);
+        // Frosted glass: blur the background, then a light scrim for text contrast.
+        //M3.blurBehind(g);
         g.fillGradient(0, 0, this.width, this.height,
                 M3.withAlpha(M3.SCRIM, 0x40), M3.withAlpha(M3.SCRIM, 0x80));
 
@@ -184,6 +187,29 @@ public class MainMenuScreen extends TitleScreen {
 
         drawFooterLine(g);
         drawNowPlaying(g);
+    }
+
+    private void drawBackground(GuiGraphicsExtractor g) {
+        // 原图尺寸
+        final int IMAGE_WIDTH = 10080;
+        final int IMAGE_HEIGHT = 5760;
+
+        // 计算缩放比例，使图片完全覆盖屏幕（类似cover效果）
+        float scaleX = (float) this.width / IMAGE_WIDTH;
+        float scaleY = (float) this.height / IMAGE_HEIGHT;
+        float scale = Math.max(scaleX, scaleY);
+
+        // 计算实际绘制尺寸（按比例缩放后的尺寸）
+        int drawWidth = Math.round(IMAGE_WIDTH * scale);
+        int drawHeight = Math.round(IMAGE_HEIGHT * scale);
+
+        // 计算偏移量，使图片居中显示
+        int offsetX = (this.width - drawWidth) / 2;
+        int offsetY = (this.height - drawHeight) / 2;
+
+        // 绘制缩放后的图片
+        RenderUtils.drawTexture(g, "gui/background.jpg", "bg",
+                offsetX, offsetY, drawWidth, drawHeight);
     }
 
     private void layout() {

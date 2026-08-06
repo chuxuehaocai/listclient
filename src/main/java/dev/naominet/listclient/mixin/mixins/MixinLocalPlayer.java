@@ -19,17 +19,22 @@ public class MixinLocalPlayer {
     @Unique
     double x, y, z;
 
+    @Unique
+    boolean oldOnGround;
+
     @Inject(
             at = @At("HEAD"),
             method = "sendPosition",
             cancellable = true)
     public void sendPosition(CallbackInfo ci) {
-        LocalPlayer localPlayer = (LocalPlayer)(Object)this;
+        LocalPlayer localPlayer = (LocalPlayer) (Object) this;
         oldYaw = localPlayer.getYRot();
         oldPitch = localPlayer.getXRot();
         x = localPlayer.getX();
         y = localPlayer.getY();
         z = localPlayer.getZ();
+        oldOnGround = localPlayer.onGround();
+
         EventPlayerMotionPreUpdate event = new EventPlayerMotionPreUpdate(
                 localPlayer.getX(),
                 localPlayer.getY(),
@@ -40,13 +45,21 @@ public class MixinLocalPlayer {
         );
 
         EventManager.instance.call(event);
-        RotationHandler.update(localPlayer, oldYaw, oldPitch, event.getYaw(), event.getPitch());
 
-        localPlayer.setYRot(event.getYaw());
-        localPlayer.setXRot(event.getPitch());
+        // Modules already GCD-stepped. Only record — do not snap a second time
+        // or the look ray used for Reach/RotationPlace will miss the packet.
+        float sentYaw = event.getYaw();
+        float sentPitch = event.getPitch();
+        RotationHandler.update(localPlayer, oldYaw, oldPitch, sentYaw, sentPitch);
+
+        localPlayer.setYRot(sentYaw);
+        localPlayer.setXRot(sentPitch);
         localPlayer.setPos(event.getX(), event.getY(), event.getZ());
+        localPlayer.setOnGround(event.isOnGround());
 
-        if(event.isCancelled()) ci.cancel();
+        if (event.isCancelled()) {
+            ci.cancel();
+        }
     }
 
     @Inject(
@@ -55,15 +68,20 @@ public class MixinLocalPlayer {
             cancellable = true
     )
     public void hookPost(CallbackInfo ci) {
-        LocalPlayer localPlayer = (LocalPlayer)(Object)this;
+        LocalPlayer localPlayer = (LocalPlayer) (Object) this;
 
         localPlayer.setYRot(oldYaw);
         localPlayer.setXRot(oldPitch);
         localPlayer.setPos(x, y, z);
+        localPlayer.setOnGround(oldOnGround);
 
-        EventPlayerMotionPostUpdate eventPlayerMotionPostUpdate = new EventPlayerMotionPostUpdate();
-        EventManager.instance.call(eventPlayerMotionPostUpdate);
+        // Post fires after the flying packet left, with the silent look still
+        // tracked in RotationHandler — KillAura/Scaffold act on that look.
+        EventPlayerMotionPostUpdate post = new EventPlayerMotionPostUpdate();
+        EventManager.instance.call(post);
 
-        if(eventPlayerMotionPostUpdate.isCancelled()) ci.cancel();
+        if (post.isCancelled()) {
+            ci.cancel();
+        }
     }
 }

@@ -12,7 +12,9 @@ import dev.naominet.listclient.module.player.Derp;
 import dev.naominet.listclient.module.player.FastPlace;
 import dev.naominet.listclient.module.player.NoFall;
 import dev.naominet.listclient.module.render.*;
+import dev.naominet.listclient.module.world.Disabler;
 import dev.naominet.listclient.module.world.Scaffold;
+import dev.naominet.listclient.module.world.Timer;
 import org.msgpack.core.MessageBufferPacker;
 import org.msgpack.core.MessageUnpacker;
 
@@ -48,8 +50,10 @@ public class ModuleManager implements ConfigWriter {
         modules.add(new FullBright());
         modules.add(new KillAura());
         modules.add(new Velocity());
-        modules.add(new Scaffold());
         modules.add(new Derp());
+        modules.add(new Timer());
+        modules.add(new Disabler());
+        modules.add(new Scaffold());
     }
 
     public ArrayList<Module> getModules() {

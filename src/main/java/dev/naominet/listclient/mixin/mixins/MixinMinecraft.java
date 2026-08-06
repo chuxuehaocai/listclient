@@ -3,6 +3,7 @@ package dev.naominet.listclient.mixin.mixins;
 import dev.naominet.listclient.core.ListClient;
 import dev.naominet.listclient.eventBus.EventManager;
 import dev.naominet.listclient.eventBus.events.EventPreTick;
+import dev.naominet.listclient.eventBus.events.EventWorldUpdate;
 import dev.naominet.listclient.manager.ModuleManager;
 import dev.naominet.listclient.module.render.ESP;
 import net.minecraft.SharedConstants;
@@ -87,5 +88,13 @@ public class MixinMinecraft {
     )
     public void onPreTick(CallbackInfo ci) {
         EventManager.instance.call(new EventPreTick());
+    }
+
+    @Inject(
+            method = "updateLevelInEngines(Lnet/minecraft/client/multiplayer/ClientLevel;Z)V",
+            at = @At("HEAD")
+    )
+    public void onWorldUpdate(CallbackInfo ci){
+        EventManager.instance.call(new EventWorldUpdate());
     }
 }

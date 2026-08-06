@@ -5,15 +5,19 @@ import dev.naominet.listclient.eventBus.events.EventRender2D;
 import dev.naominet.listclient.manager.ModuleManager;
 import dev.naominet.listclient.module.Category;
 import dev.naominet.listclient.module.Module;
+import dev.naominet.listclient.module.world.Scaffold;
 import dev.naominet.listclient.ui.MusicPlayerScreen;
+import dev.naominet.listclient.ui.theme.Icons;
 import dev.naominet.listclient.ui.theme.M3;
 import dev.naominet.listclient.utils.AnimationUtils;
+import dev.naominet.listclient.utils.Lang;
 import dev.naominet.listclient.utils.RenderUtils;
 import dev.naominet.listclient.utils.font.TTFFontRenderer;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.Holder;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
 import java.util.Map;
@@ -27,6 +31,14 @@ public class Interface extends Module {
     public static ArrayList<Module> sortedModuleList;
     public static boolean sortedModuleListNeedUpdata = true;
     float yPlus = 2;
+
+    // Scaffold HUD state is kept here so the widget can animate out after Scaffold disables.
+    private float scaffoldVisibility;
+    private float scaffoldY;
+    private boolean scaffoldWasVisible;
+    private float scaffoldCountScale = 1f;
+    private int lastScaffoldCount = -1;
+    private String lastScaffoldItem = "";
 
     /** M3 type scale – every HUD string goes through TTF. */
     private final TTFFontRenderer brandFont = M3.title();
@@ -69,6 +81,7 @@ public class Interface extends Module {
 
         // ---- MusicPlayer widget (parasitic host) ----
         renderMusicWidget(extractor);
+        renderScaffoldBlockCounter(extractor);
 
         int startX = mc.getWindow().getGuiScaledWidth();
 
@@ -151,10 +164,87 @@ public class Interface extends Module {
         }
     }
 
+    private void renderScaffoldBlockCounter(GuiGraphicsExtractor g) {
+        Scaffold scaffold = ModuleManager.instance.getModuleByClazz(Scaffold.class);
+        boolean visible = scaffold != null && scaffold.isEnable() && mc.player != null;
+        scaffoldVisibility = AnimationUtils.easeExp(scaffoldVisibility, visible ? 1f : 0f, 11f);
+        if (scaffoldVisibility < 0.01f || mc.player == null) {
+            scaffoldWasVisible = false;
+            return;
+        }
+
+        ItemStack stack = visible ? mc.player.getMainHandItem() : ItemStack.EMPTY;
+        int count = visible ? scaffold.getAvailableBlockCount() : 0;
+        String itemName = stack.isEmpty() ? Lang.tr("hud.scaffold.no_block_selected") : stack.getHoverName().getString();
+        String countText = Integer.toString(count);
+
+        if (count != lastScaffoldCount || !itemName.equals(lastScaffoldItem)) {
+            scaffoldCountScale = 1.18f;
+            lastScaffoldCount = count;
+            lastScaffoldItem = itemName;
+        }
+        scaffoldCountScale = AnimationUtils.easeExp(scaffoldCountScale, 1f, 14f);
+
+        TTFFontRenderer labelFont = M3.labelSmall();
+        TTFFontRenderer nameFont = M3.label();
+        TTFFontRenderer countFont = M3.headline();
+        int height = 28;
+        int padding = 5;
+        int itemBox = 20;
+        int gap = 5;
+        String label = Lang.tr("hud.scaffold.building_with");
+        float labelWidth = labelFont.width(label);
+        float itemNameWidth = nameFont.width(itemName);
+        float countWidth = countFont.width(countText);
+        int textWidth = (int) Math.ceil(Math.max(labelWidth, itemNameWidth));
+        int width = padding * 2 + itemBox + gap + textWidth + gap + 25;
+        int x = (g.guiWidth() - width) / 2;
+        int targetY = g.guiHeight() - 51;
+        if (visible && !scaffoldWasVisible) {
+            scaffoldY = targetY + 12f;
+        }
+        scaffoldY = AnimationUtils.easeExp(scaffoldY, targetY, 16f);
+        scaffoldWasVisible = visible;
+        int y = Math.round(scaffoldY + (1f - scaffoldVisibility) * 12f);
+
+        M3.shadowSoft(g, x, y, width, height, M3.SHAPE_M, scaffoldVisibility);
+        M3.roundRect(g, x, y, width, height, M3.SHAPE_M,
+                M3.fade(M3.SURFACE_CONTAINER_HIGH, 0xEE / 255f * scaffoldVisibility));
+        M3.roundRect(g, x + 3, y + 3, itemBox, itemBox, M3.SHAPE_S,
+                M3.fade(M3.SECONDARY_CONTAINER, scaffoldVisibility));
+
+        if (!stack.isEmpty()) {
+            g.item(mc.player, stack, x + 5, y + 5, 31);
+            g.itemDecorations(mc.font, stack, x + 5, y + 5);
+        } else {
+            Icons.drawCentered(g, Icons.BLOCK, 10, x + 3 + itemBox / 2f,
+                    y + 3 + itemBox / 2f, M3.fade(M3.ON_SECONDARY_CONTAINER, scaffoldVisibility));
+        }
+
+        int textX = x + padding + itemBox + gap;
+        labelFont.drawString(g, label, textX, y + 5, M3.fade(M3.ON_SURFACE_VARIANT, scaffoldVisibility));
+        nameFont.drawString(g, itemName, textX, y + 14, M3.fade(M3.ON_SURFACE, scaffoldVisibility));
+
+        int countX = x + width - padding - 23;
+        g.pose().pushMatrix();
+        try {
+            g.pose().translate(countX + 11.5f, y + height / 2f);
+            g.pose().scale(scaffoldCountScale, scaffoldCountScale);
+            g.pose().translate(-(countX + 11.5f), -(y + height / 2f));
+            M3.roundRect(g, countX, y + 4, 23, 20, M3.pill(20), M3.fade(M3.PRIMARY_CONTAINER, scaffoldVisibility));
+            countFont.drawString(g, countText,
+                    countX + (23 - countWidth) / 2f,
+                    y + (height - countFont.lineHeight()) / 2f,
+                    M3.fade(M3.ON_PRIMARY_CONTAINER, scaffoldVisibility));
+        } finally {
+            g.pose().popMatrix();
+        }
+    }
+
     private float renderedWidth(Module module) {
         float width = listFont.width(module.getName());
         String suffix = module.getSuffix();
-        return suffix == null || suffix.isEmpty() ? width : width + 1f + listFont.width(suffix);
+        return suffix == null || suffix.isEmpty() ? width : width + listFont.width(" ") + listFont.width(suffix);
     }
 
     private void renderMusicWidget(GuiGraphicsExtractor g) {

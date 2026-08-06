@@ -61,6 +61,9 @@ public final class BlockUtil {
     }
 
     public static BlockData findDirectSupport(ClientLevel level, BlockPos placement) {
+        if (previousBlock != null && !isSupport(level, previousBlock)) {
+            previousBlock = null;
+        }
         return findDirectSupportInternal(level, placement);
     }
 

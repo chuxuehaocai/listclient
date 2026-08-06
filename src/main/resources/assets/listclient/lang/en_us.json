@@ -155,5 +155,7 @@
   "widget.open_hint": "Click to open NetEase Music",
   "widget.idle_hint": "Not logged in · click to open",
 
-  "hud.inventory": "Inventory"
+  "hud.inventory": "Inventory",
+  "hud.scaffold.building_with": "Building with",
+  "hud.scaffold.no_block_selected": "No block selected"
 }

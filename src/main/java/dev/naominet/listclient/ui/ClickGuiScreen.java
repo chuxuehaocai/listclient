@@ -63,6 +63,7 @@ public class ClickGuiScreen extends Screen {
     private static final int PAD = 6;
     private static final int CARD_H = 22;
     private static final int ROW_H = 16;
+    private static final int CONTENT_FOOTER_H = 16;
 
     /** Panel position persists across reopens. */
     private static int sPanelX;
@@ -193,7 +194,7 @@ public class ClickGuiScreen extends Screen {
         int cx0 = x + RAIL_W + 1;
         int cy0 = y + HEADER_H;
         int cw = PANEL_W - RAIL_W - 1;
-        int ch = PANEL_H - HEADER_H;
+        int ch = PANEL_H - HEADER_H - CONTENT_FOOTER_H;
         g.enableScissor(cx0, cy0, cx0 + cw, cy0 + ch);
         zClipY0 = cy0;
         zClipY1 = cy0 + ch;
@@ -718,7 +719,7 @@ public class ClickGuiScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mx, double my, double scrollX, double scrollY) {
         if (mx >= sPanelX + RAIL_W && mx <= sPanelX + PANEL_W
-                && my >= sPanelY + HEADER_H && my <= sPanelY + PANEL_H) {
+                && my >= sPanelY + HEADER_H && my <= sPanelY + PANEL_H - CONTENT_FOOTER_H) {
             scrollTarget = Math.max(0, scrollTarget + (float) (-scrollY * 20));
             return true;
         }

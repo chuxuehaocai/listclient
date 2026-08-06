@@ -20,8 +20,7 @@ public class MixinEntity {
             return;
         }
 
-        Vec3 fixedMovement = RotationHandler.applyMoveFix(movement);
-        Vec3 result = applyRotation(fixedMovement, speed, RotationHandler.getMovementYaw());
+        Vec3 result = applyRotation(movement, speed, RotationHandler.getMovementYaw());
         entity.setDeltaMovement(entity.getDeltaMovement().add(result));
         ci.cancel();
     }

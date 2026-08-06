@@ -155,5 +155,7 @@
   "widget.open_hint": "点击打开网易云",
   "widget.idle_hint": "未登录 · 点击打开",
 
-  "hud.inventory": "物品栏"
+  "hud.inventory": "物品栏",
+  "hud.scaffold.building_with": "当前方块",
+  "hud.scaffold.no_block_selected": "未选择方块"
 }

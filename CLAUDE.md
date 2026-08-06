@@ -53,6 +53,7 @@ This is a client-only Fabric mod under `dev.naominet.listclient`. `fabric.mod.js
 ### Rendering and UI
 
 - `MixinHud` emits `EventRender2D`; enabled render modules consume it through the event bus. `RenderUtils` contains the Minecraft GUI drawing helpers.
+- Use the existing `RenderUtils` wrappers when drawing textures instead of calling Minecraft's `blit` APIs directly. For bundled client textures, call `RenderUtils.drawTexture(g, "gui/background.jpg", "bg", x, y, width, height)` (with an appropriate stable texture ID) and keep the resource under `assets/listclient/textures/`.
 - `Interface` is enabled by default and owns the main HUD, enabled-module list, and the floating music mini-player. HUD module coordinates are edited by dragging while the chat screen is open through `MixinChatScreen`.
 - `MusicPlayer` is an entry-style module bound to `M`: enabling it opens `MusicPlayerScreen` and then releases its enabled state. Playback/session state remains in `MusicPlayer`, while audio is process-wide through `NcmAudioPlayer.INSTANCE` and the mini-player is rendered by `Interface`.
 - `MusicPlayerScreen` is the full custom screen. Shared UI state belongs in `MusicPlayer` so opening and closing the screen does not reset playback, API, queue, login, or image-cache state.

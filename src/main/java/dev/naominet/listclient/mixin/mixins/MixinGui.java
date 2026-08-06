@@ -24,7 +24,7 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 @Mixin(Gui.class)
 public class MixinGui {
 
-    @ModifyVariable(method = "setScreen", at = @At("HEAD"), argsOnly = true)
+    @ModifyVariable(method = "setScreen", at = @At("HEAD"), argsOnly = true, name = "screen")
     private Screen listclient$swapTitleScreen(Screen screen) {
         if (screen instanceof TitleScreen && !(screen instanceof MainMenuScreen)) {
             return new MainMenuScreen();

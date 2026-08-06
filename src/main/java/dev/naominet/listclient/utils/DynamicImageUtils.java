@@ -8,7 +8,6 @@ import net.minecraft.resources.Identifier;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -62,8 +61,7 @@ public class DynamicImageUtils {
 
     public static void registerDynamicImage(Identifier identifier, InputStream stream) {
         try {
-            NativeImage image = NativeImage.read(stream);
-            registerDynamicImage(identifier, image);
+            registerDynamicImage(identifier, decodeRaw(stream.readAllBytes()));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -71,8 +69,7 @@ public class DynamicImageUtils {
 
     public static void registerDynamicImage(Identifier identifier, byte[] pngOrJpegBytes) {
         try {
-            NativeImage image = NativeImage.read(ensurePng(pngOrJpegBytes));
-            registerDynamicImage(identifier, image);
+            registerDynamicImage(identifier, decodeRaw(pngOrJpegBytes));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -90,7 +87,7 @@ public class DynamicImageUtils {
     public static boolean canDecode(byte[] bytes) {
         if (bytes == null || bytes.length < 8) return false;
         try {
-            NativeImage image = NativeImage.read(ensurePng(bytes));
+            NativeImage image = decodeRaw(bytes);
             image.close();
             return true;
         } catch (Exception e) {
@@ -125,9 +122,31 @@ public class DynamicImageUtils {
         return rounded;
     }
 
-    /** Plain decode with no corner masking – shared by the cover and avatar paths. */
+    /** Plain decode with no corner masking – shared by resource, cover and avatar paths. */
     private static NativeImage decodeRaw(byte[] bytes) throws IOException {
-        return NativeImage.read(ensurePng(bytes));
+        if (isPng(bytes)) {
+            return NativeImage.read(bytes);
+        }
+
+        BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
+        if (image == null) {
+            throw new IOException("ImageIO cannot decode image");
+        }
+        return toNativeImage(image);
+    }
+
+    /** Copies ImageIO's packed ARGB pixels directly without an intermediate PNG encode/decode. */
+    private static NativeImage toNativeImage(BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
+        NativeImage nativeImage = new NativeImage(width, height, true);
+        for (int y = 0, index = 0; y < height; y++) {
+            for (int x = 0; x < width; x++, index++) {
+                nativeImage.setPixel(x, y, pixels[index]);
+            }
+        }
+        return nativeImage;
     }
 
     /**
@@ -176,7 +195,7 @@ public class DynamicImageUtils {
      */
     public static void registerCircularDynamicImage(Identifier identifier, byte[] pngOrJpegBytes) {
         try {
-            NativeImage src = NativeImage.read(ensurePng(pngOrJpegBytes));
+            NativeImage src = decodeRaw(pngOrJpegBytes);
             NativeImage circle = makeCircular(src);
             src.close();
             registerDynamicImage(identifier, circle);
@@ -185,27 +204,7 @@ public class DynamicImageUtils {
         }
     }
 
-    /**
-     * Minecraft 26.2's NativeImage.read() unconditionally calls
-     * {@code PngInfo.validateHeader(ByteBuffer)} before invoking STB, so it
-     * only accepts PNG-formatted bytes. Use ImageIO to transcode JPEG / GIF /
-     * BMP / WebP (anything ImageIO supports) to PNG first.
-     */
-    private static byte[] ensurePng(byte[] raw) throws IOException {
-        if (isPng(raw)) {
-            return raw; // already PNG — fast path
-        }
-        BufferedImage img = ImageIO.read(new ByteArrayInputStream(raw));
-        if (img == null) {
-            throw new IOException("ImageIO cannot decode image");
-        }
-        ByteArrayOutputStream bos = new ByteArrayOutputStream(raw.length);
-        if (!ImageIO.write(img, "PNG", bos)) {
-            throw new IOException("ImageIO PNG encode failed");
-        }
-        return bos.toByteArray();
-    }
-
+    /** Minecraft's NativeImage only accepts PNG input, so other formats decode through ImageIO. */
     private static boolean isPng(byte[] bytes) {
         return bytes != null && bytes.length >= 8
                 && (bytes[0] & 0xFF) == 0x89

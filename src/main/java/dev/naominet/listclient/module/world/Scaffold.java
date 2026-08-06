@@ -7,6 +7,10 @@ import dev.naominet.listclient.module.Category;
 import dev.naominet.listclient.module.Module;
 import dev.naominet.listclient.utils.BlockUtil;
 import dev.naominet.listclient.utils.ClientUtils;
+import dev.naominet.listclient.utils.MoveUtils;
+import dev.naominet.listclient.utils.RotationHandler;
+import dev.naominet.listclient.utils.RotationUtil;
+import dev.naominet.listclient.value.Numbers;
 import dev.naominet.listclient.value.Option;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -22,6 +26,15 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.Set;
 
+/**
+ * Grim-safe Scaffold (OpenZen-style):
+ * <ul>
+ *   <li>GCD-stepped silent rotations toward a stable face hit vec.</li>
+ *   <li>Place only when the sent look ray hits that face (RotationPlace).</li>
+ *   <li>Place after flying so post-flying raytrace matches.</li>
+ *   <li>No per-tick random hit points (those prevent GCD convergence).</li>
+ * </ul>
+ */
 public class Scaffold extends Module {
     private static final Set<Block> BLACKLIST = Set.of(
             Blocks.ENCHANTING_TABLE, Blocks.CHEST, Blocks.ENDER_CHEST,
@@ -33,20 +46,26 @@ public class Scaffold extends Module {
             Blocks.BAMBOO
     );
 
-    public final Option keepY = new Option("KeepY", true);
+    public final Option keepY = new Option("KeepY", false);
     public final Option down = new Option("Down", false);
+    public final Option eagle = new Option("Eagle", true);
+    public final Option rayTrace = new Option("RayTrace", true);
+    public final Numbers rotationSpeed = new Numbers("RotationSpeed", 120.0, 30.0, 180.0, 1.0);
+    public final Numbers placeRange = new Numbers("PlaceRange", 4.5, 2.0, 4.5, 0.1);
 
     private int startY;
     private int startSlot = -1;
     private boolean disablePending;
     private boolean notifiedNoBlocks;
     private PendingPlacement pendingPlacement;
-    // Rate-limit to one placement per game tick; sendPosition can fire multiple times per tick.
     private int lastPlacedTick = -1;
+    private float lastYawDelta;
+    private float lastPitchDelta;
+    private boolean ownedShift;
 
     public Scaffold() {
         super("Scaffold", Category.World);
-        addValues(keepY, down);
+        addValues(keepY, down, eagle, rayTrace, rotationSpeed, placeRange);
     }
 
     @Override
@@ -57,8 +76,11 @@ public class Scaffold extends Module {
         notifiedNoBlocks = false;
         startSlot = -1;
         lastPlacedTick = -1;
+        lastYawDelta = 0.0F;
+        lastPitchDelta = 0.0F;
+        ownedShift = false;
 
-        if (mc.player == null || mc.level == null || mc.gameMode == null) {
+        if (!hasActiveClientWorld()) {
             scheduleDisable();
             return;
         }
@@ -83,6 +105,7 @@ public class Scaffold extends Module {
         disablePending = false;
         notifiedNoBlocks = false;
         lastPlacedTick = -1;
+        releaseShift();
 
         if (mc.player != null && startSlot >= 0 && startSlot < 9) {
             mc.player.getInventory().setSelectedSlot(startSlot);
@@ -115,38 +138,104 @@ public class Scaffold extends Module {
             mc.player.setSprinting(false);
         }
 
+        if (eagle.getValue() && mc.player.onGround() && MoveUtils.isMoving() && isOnBlockEdge(0.3F)) {
+            holdShift();
+        } else {
+            releaseShift();
+        }
+
         int baseY = keepY.getValue() ? startY : Mth.floor(mc.player.getY());
-        BlockPos target = new BlockPos(
+        BlockPos under = new BlockPos(
                 Mth.floor(mc.player.getX()),
                 baseY - (descending ? 2 : 1),
                 Mth.floor(mc.player.getZ())
         );
-        // Keep the server-side head rotation aimed at the bridge position even
-        // between placements, so it does not snap back after each placed block.
-        float[] bridgeRotations = rotationsTo(new Vec3(
-                target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5
-        ));
-        event.setYaw(bridgeRotations[0]);
-        event.setPitch(bridgeRotations[1]);
 
-        // Do not let the support search fan out around an already filled target.
-        // Without this guard, standing still makes Scaffold place a cluster nearby.
-        if (!mc.level.getBlockState(target).canBeReplaced()) {
-            return;
-        }
-        // Only place at the exact block below the player. The breadth-first helper
-        // is useful for finding support, but using its alternate placement nodes
-        // here creates a platform/cluster instead of a one-block bridge.
-        BlockUtil.BlockData blockData = BlockUtil.findDirectSupport(mc.level, target);
-        if (blockData == null) {
-            return;
+        float fromYaw = RotationHandler.isInitialized()
+                ? RotationHandler.getSentYaw()
+                : mc.player.getYRot();
+        float fromPitch = RotationHandler.isInitialized()
+                ? RotationHandler.getSentPitch()
+                : mc.player.getXRot();
+
+        BlockUtil.BlockData blockData = null;
+        if (mc.level.getBlockState(under).canBeReplaced()) {
+            blockData = BlockUtil.findDirectSupport(mc.level, under);
+            if (blockData == null) {
+                blockData = BlockUtil.findSupport(mc.level, under);
+            }
+            if (blockData != null && !under.equals(blockData.placedPosition())) {
+                blockData = null;
+            }
         }
 
-        Vec3 hitLocation = faceLocation(blockData.position(), blockData.facing());
-        BlockHitResult hitResult = new BlockHitResult(
-                hitLocation, blockData.facing(), blockData.position(), false
-        );
-        pendingPlacement = new PendingPlacement(blockData, hitResult, slot);
+        float targetYaw;
+        float targetPitch;
+        Vec3 hitLocation = null;
+        if (blockData != null) {
+            hitLocation = RotationUtil.faceHitVec(blockData.position(), blockData.facing());
+            float[] placeRots = RotationUtil.rotationTo(mc.player.getEyePosition(1.0F), hitLocation);
+            targetYaw = placeRots[0];
+            targetPitch = placeRots[1];
+        } else {
+            // Hold a bridge-ish look under the feet so the head does not snap
+            // back to the camera between placements.
+            float[] hold = RotationUtil.rotationTo(mc.player.getEyePosition(1.0F), new Vec3(
+                    under.getX() + 0.5, under.getY() + 0.5, under.getZ() + 0.5));
+            targetYaw = hold[0];
+            targetPitch = hold[1];
+        }
+
+        float maxStep = rotationSpeed.floatValue();
+        if (!MoveUtils.isMoving()) {
+            maxStep = 180.0F;
+        }
+        float[] stepped = RotationHandler.stepToward(fromYaw, fromPitch, targetYaw, targetPitch, maxStep);
+        // Anti-dupe jitter is optional and must NOT push the look off the block.
+        // Try the jittered look first; fall back to the plain GCD step if it misses.
+        float[] jittered = RotationHandler.breakDuplicateDelta(
+                stepped[0], stepped[1], fromYaw, fromPitch, lastYawDelta, lastPitchDelta);
+
+        float sendYaw = stepped[0];
+        float sendPitch = stepped[1];
+        boolean canPlace = false;
+        if (blockData != null && hitLocation != null) {
+            if (!rayTrace.getValue()) {
+                sendYaw = jittered[0];
+                sendPitch = jittered[1];
+                canPlace = true;
+            } else if (RotationUtil.canRayTraceBlock(
+                    jittered[0], jittered[1],
+                    blockData.position(), blockData.facing(),
+                    placeRange.getValue())) {
+                sendYaw = jittered[0];
+                sendPitch = jittered[1];
+                canPlace = true;
+            } else if (RotationUtil.canRayTraceBlock(
+                    stepped[0], stepped[1],
+                    blockData.position(), blockData.facing(),
+                    placeRange.getValue())) {
+                sendYaw = stepped[0];
+                sendPitch = stepped[1];
+                canPlace = true;
+            }
+            // else: keep holding the stepped look; do not place this tick
+        } else {
+            sendYaw = jittered[0];
+            sendPitch = jittered[1];
+        }
+
+        lastYawDelta = Math.abs(Mth.wrapDegrees(sendYaw - fromYaw));
+        lastPitchDelta = Math.abs(sendPitch - fromPitch);
+        event.setYaw(sendYaw);
+        event.setPitch(sendPitch);
+
+        if (canPlace && blockData != null && hitLocation != null) {
+            BlockHitResult hitResult = new BlockHitResult(
+                    hitLocation, blockData.facing(), blockData.position(), false
+            );
+            pendingPlacement = new PendingPlacement(blockData, hitResult, slot);
+        }
     }
 
     @EventTarget
@@ -158,10 +247,22 @@ public class Scaffold extends Module {
             return;
         }
 
-        // At most one placement per game tick; sendPosition can fire multiple times per tick.
         int tick = mc.player.tickCount;
         if (tick == lastPlacedTick) {
             return;
+        }
+
+        float yaw = RotationHandler.getSentYaw();
+        float pitch = RotationHandler.getSentPitch();
+
+        // Re-validate with the rotation that actually went out.
+        BlockHitResult liveHit = RotationUtil.rayTraceBlock(yaw, pitch, placeRange.getValue());
+        if (rayTrace.getValue()) {
+            if (liveHit == null
+                    || !liveHit.getBlockPos().equals(placement.blockData().position())
+                    || liveHit.getDirection() != placement.blockData().facing()) {
+                return;
+            }
         }
 
         ItemStack stack = mc.player.getInventory().getItem(placement.slot());
@@ -178,13 +279,41 @@ public class Scaffold extends Module {
             return;
         }
 
+        BlockHitResult toUse = liveHit != null ? liveHit : placement.hitResult();
         InteractionResult result = mc.gameMode.useItemOn(
-                mc.player, InteractionHand.MAIN_HAND, placement.hitResult()
+                mc.player, InteractionHand.MAIN_HAND, toUse
         );
         if (result.consumesAction()) {
             lastPlacedTick = tick;
             BlockUtil.markPlaced(placement.blockData().placedPosition());
             mc.player.swing(InteractionHand.MAIN_HAND);
+        } else {
+            BlockUtil.reset();
+        }
+    }
+
+    private boolean isOnBlockEdge(float inflate) {
+        if (mc.level == null || mc.player == null || !mc.player.onGround()) {
+            return false;
+        }
+        // True when the shrunk-under box has no collisions → standing on a ledge.
+        return !mc.level.getBlockCollisions(
+                mc.player,
+                mc.player.getBoundingBox().move(0.0, -0.5, 0.0).inflate(-inflate, 0.0, -inflate)
+        ).iterator().hasNext();
+    }
+
+    private void holdShift() {
+        if (!ownedShift) {
+            ownedShift = true;
+            mc.options.keyShift.setDown(true);
+        }
+    }
+
+    private void releaseShift() {
+        if (ownedShift) {
+            ownedShift = false;
+            mc.options.keyShift.setDown(false);
         }
     }
 
@@ -200,39 +329,28 @@ public class Scaffold extends Module {
         return -1;
     }
 
+    public int getAvailableBlockCount() {
+        if (mc.player == null) {
+            return 0;
+        }
+        int count = 0;
+        for (int slot = 0; slot < 9; slot++) {
+            ItemStack stack = mc.player.getInventory().getItem(slot);
+            if (isValidBlock(stack)) {
+                count += stack.getCount();
+            }
+        }
+        return count;
+    }
+
     public boolean isDownEnabled() {
         return down.getValue();
     }
 
-    private boolean isValidBlock(ItemStack stack) {
+    public static boolean isValidBlock(ItemStack stack) {
         return !stack.isEmpty() && stack.getCount() > 0
                 && stack.getItem() instanceof BlockItem blockItem
                 && !BLACKLIST.contains(blockItem.getBlock());
-    }
-
-    private Vec3 faceLocation(BlockPos position, Direction face) {
-        double x = position.getX() + 0.5;
-        double y = position.getY() + 0.5;
-        double z = position.getZ() + 0.5;
-        return switch (face) {
-            case WEST -> new Vec3(position.getX(), y, z);
-            case EAST -> new Vec3(position.getX() + 1.0, y, z);
-            case DOWN -> new Vec3(x, position.getY(), z);
-            case UP -> new Vec3(x, position.getY() + 1.0, z);
-            case NORTH -> new Vec3(x, y, position.getZ());
-            case SOUTH -> new Vec3(x, y, position.getZ() + 1.0);
-        };
-    }
-
-    private float[] rotationsTo(Vec3 target) {
-        Vec3 eye = mc.player.getEyePosition();
-        double dx = target.x - eye.x;
-        double dy = target.y - eye.y;
-        double dz = target.z - eye.z;
-        double horizontal = Math.sqrt(dx * dx + dz * dz);
-        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
-        float pitch = (float) -Math.toDegrees(Math.atan2(dy, horizontal));
-        return new float[]{Mth.wrapDegrees(yaw), Mth.clamp(pitch, -90.0F, 90.0F)};
     }
 
     private void notifyNoBlocks() {
@@ -247,11 +365,18 @@ public class Scaffold extends Module {
             return;
         }
         disablePending = true;
+        if (mc == null) {
+            return;
+        }
         mc.execute(() -> {
             if (isEnable() && disablePending) {
                 setEnable(false);
             }
         });
+    }
+
+    private boolean hasActiveClientWorld() {
+        return mc != null && mc.player != null && mc.level != null && mc.gameMode != null;
     }
 
     private record PendingPlacement(BlockUtil.BlockData blockData,
