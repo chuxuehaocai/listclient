@@ -5,6 +5,7 @@ import dev.naominet.listclient.eventBus.events.EventPacket;
 import dev.naominet.listclient.extension.ConnectionExtension;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelHandlerContext;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.Packet;
 import org.jspecify.annotations.Nullable;
@@ -25,6 +26,18 @@ public class MixinConnection implements ConnectionExtension {
             cancellable = true
     )
     public void sendPacketHook(Packet<?> packet, @Nullable ChannelFutureListener listener, boolean flush, CallbackInfo ci) {
+        EventPacket ep = new EventPacket(packet);
+        EventManager.instance.call(ep);
+
+        if(ep.isCancelled()) ci.cancel();
+    }
+
+    @Inject(
+            at = @At("HEAD"),
+            method = "channelRead0*",
+            cancellable = true
+    )
+    public void receivePacketHook(final ChannelHandlerContext ctx, final Packet<?> packet, CallbackInfo ci) {
         EventPacket ep = new EventPacket(packet);
         EventManager.instance.call(ep);
 

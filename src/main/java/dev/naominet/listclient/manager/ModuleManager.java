@@ -8,9 +8,8 @@ import dev.naominet.listclient.module.misc.NoCommands;
 import dev.naominet.listclient.module.movement.Fly;
 import dev.naominet.listclient.module.movement.Speed;
 import dev.naominet.listclient.module.movement.Sprint;
-import dev.naominet.listclient.module.player.Derp;
-import dev.naominet.listclient.module.player.FastPlace;
-import dev.naominet.listclient.module.player.NoFall;
+import dev.naominet.listclient.module.misc.Derp;
+import dev.naominet.listclient.module.player.*;
 import dev.naominet.listclient.module.render.*;
 import dev.naominet.listclient.module.world.Disabler;
 import dev.naominet.listclient.module.world.Scaffold;
@@ -54,6 +53,9 @@ public class ModuleManager implements ConfigWriter {
         modules.add(new Timer());
         modules.add(new Disabler());
         modules.add(new Scaffold());
+        modules.add(new ChestStealer());
+        modules.add(new NoRotate());
+        modules.add(new Eagle());
     }
 
     public ArrayList<Module> getModules() {

@@ -77,13 +77,17 @@ public final class NotificationManager {
 
     @EventTarget
     public void onRender2D(EventRender2D event) {
+        render(event.getExtractor());
+    }
+
+    /** Renders above a custom Screen, whose surface is drawn after the HUD. */
+    public synchronized void render(GuiGraphicsExtractor g) {
         long now = Util.getMillis();
         drainIncoming(now);
         removeExpired(now);
         if (active.isEmpty()) return;
 
         MonetTheme.update();
-        GuiGraphicsExtractor g = event.getExtractor();
         for (int i = 0; i < active.size(); i++) {
             ActiveNotification entry = active.get(i);
             float visibility = visibility(entry, now);

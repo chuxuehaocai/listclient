@@ -58,7 +58,7 @@ public class MainMenuScreen extends TitleScreen {
     private static final int BACKGROUND_HEIGHT = 5760;
     private static final String DEMO_LEVEL_ID = "Demo_World";
 
-    private static final int PANEL_W = 176;
+    private static final int PANEL_W = 100;
     private static final int HERO_H = 40;
     private static final int FOOTER_H = 26;
     private static final int BTN_H = 17;
@@ -158,8 +158,6 @@ public class MainMenuScreen extends TitleScreen {
         fade = clamp01((Util.getMillis() - openedAt) / 420f);
 
         drawBackground(g);
-        // Frosted glass: blur the background, then a light scrim for text contrast.
-        //M3.blurBehind(g);
         g.fillGradient(0, 0, this.width, this.height,
                 M3.withAlpha(M3.SCRIM, 0x40), M3.withAlpha(M3.SCRIM, 0x80));
 
@@ -186,7 +184,6 @@ public class MainMenuScreen extends TitleScreen {
         }
 
         drawFooterLine(g);
-        drawNowPlaying(g);
     }
 
     private void drawBackground(GuiGraphicsExtractor g) {
@@ -214,9 +211,9 @@ public class MainMenuScreen extends TitleScreen {
 
     private void layout() {
         int bodyH = PAD + entries.size() * BTN_H + (entries.size() - 1) * BTN_GAP + PAD;
-        panelH = HERO_H + bodyH + FOOTER_H;
-        panelX = clamp(this.width / 8, MARGIN, Math.max(MARGIN, this.width - PANEL_W - MARGIN));
-        panelY = clamp((this.height - panelH) / 2, 12, Math.max(12, this.height - panelH - 16));
+        panelH = bodyH;
+        panelX = this.width / 2 - PANEL_W / 2;
+        panelY = (this.height - panelH) / 2;
     }
 
     private void drawPanel(GuiGraphicsExtractor g) {
@@ -226,9 +223,7 @@ public class MainMenuScreen extends TitleScreen {
         M3.shadow(g, x, y, PANEL_W, panelH, M3.SHAPE_XL);
         M3.roundRect(g, x, y, PANEL_W, panelH, M3.SHAPE_XL, faded(M3.SURFACE_CONTAINER));
 
-        drawHero(g, x, y);
-
-        int by = y + HERO_H + PAD;
+        int by = y + PAD;
         int bx = x + PAD;
         int bw = PANEL_W - PAD * 2;
         for (int i = 0; i < entries.size(); i++) {
@@ -239,27 +234,12 @@ public class MainMenuScreen extends TitleScreen {
             e.h = BTN_H;
             drawButton(g, e, i == selected);
         }
-
-        drawFooterBand(g, x, y + panelH - FOOTER_H);
-
-        if (!hint.isEmpty()) {
-            String shown = hint.length() > 30 ? hint.substring(0, 29) + "…" : hint;
-            smallFont.drawCenteredString(g, shown, x + PANEL_W / 2f, y + panelH + 4, faded(M3.ERROR));
-        }
     }
 
     /** Primary-container hero band with the wordmark, rounded to match the panel top. */
     private void drawHero(GuiGraphicsExtractor g, int x, int y) {
-        M3.roundRect(g, x, y, PANEL_W, HERO_H, M3.SHAPE_XL,
-                faded(M3.PRIMARY_CONTAINER), true, true, false, false);
-
         float cx = x + PANEL_W / 2f;
         displayFont.drawCenteredString(g, "List", cx, y + 6, faded(M3.ON_PRIMARY_CONTAINER));
-        int markW = (int) displayFont.width("List") + 26;
-        int lw = Math.max(1, (int) (markW * easeOut(fade)));
-        fill(g, (int) (cx - lw / 2f), y + 24, lw, 1, faded(M3.PRIMARY));
-        smallFont.drawCenteredString(g, "CLIENT · BUILD 4.0", cx, y + 28,
-                faded(M3.withAlpha(M3.ON_PRIMARY_CONTAINER, 0xC8)));
     }
 
     private void drawButton(GuiGraphicsExtractor g, Entry e, boolean keyboardFocus) {
@@ -353,54 +333,6 @@ public class MainMenuScreen extends TitleScreen {
                 faded(M3.withAlpha(M3.ON_SURFACE_VARIANT, 0xB4)));
     }
 
-    private void drawNowPlaying(GuiGraphicsExtractor g) {
-        MusicPlayer mp = MusicPlayer.instance;
-        if (mp == null || mp.currentSong == null) {
-            nowPlayingW = 0;
-            return;
-        }
-        int h = 28;
-        int y = this.height - h - 20;
-        int w = Math.min(180, this.width - (panelX + PANEL_W) - 24);
-        if (w < 108) {
-            nowPlayingW = 0;
-            return;
-        }
-        int x = this.width - w - 14;
-
-        nowPlayingX = x;
-        nowPlayingY = y;
-        nowPlayingW = w;
-        nowPlayingH = h;
-
-        boolean hot = isOver(x, y, w, h);
-        nowPlayingHover = AnimationUtils.animationNew(nowPlayingHover, hot ? 1f : 0f, 4f, 0.06f);
-        float t = clamp01(nowPlayingHover);
-
-        int bg = M3.layered(M3.SURFACE_CONTAINER_HIGH, M3.ON_SURFACE, (int) (M3.STATE_HOVER * t));
-        M3.shadow(g, x, y, w, h, M3.SHAPE_M);
-        M3.roundRect(g, x, y, w, h, M3.SHAPE_M, faded(bg));
-        Ripple.draw(g, "now-playing", x, y, w, h, M3.SHAPE_M, faded(M3.ON_SURFACE));
-
-        var audio = mp.audio;
-        Icons.drawCentered(g, audio.isPlaying() ? Icons.MUSIC_NOTE : Icons.PAUSE, 9,
-                x + 11, y + h / 2f, faded(M3.PRIMARY));
-        String state = Lang.tr(audio.isLoading() ? "np.buffering"
-                : audio.isPlaying() ? "np.playing" : "np.paused");
-        smallFont.drawString(g, state, x + 20, y + 3, faded(M3.ON_SURFACE_VARIANT));
-        titleFont.drawString(g, MusicPlayer.ellipsize(mp.currentSong.name, 16), x + 20, y + 12,
-                faded(M3.ON_SURFACE));
-
-        int barY = y + h - 5;
-        fill(g, x + 20, barY, w - 30, 2, faded(M3.SURFACE_CONTAINER_HIGHEST));
-        int filled = (int) ((w - 30) * clamp01(audio.progress()));
-        if (filled > 0) {
-            fill(g, x + 20, barY, filled, 2, faded(M3.PRIMARY));
-        }
-    }
-
-    private int nowPlayingX, nowPlayingY, nowPlayingW, nowPlayingH;
-    private float nowPlayingHover;
 
     /* ================================================================== */
     /*  input                                                             */
@@ -425,12 +357,6 @@ public class MainMenuScreen extends TitleScreen {
                 activate(e);
                 return true;
             }
-        }
-        if (nowPlayingW > 0 && mx >= nowPlayingX && mx <= nowPlayingX + nowPlayingW
-                && my >= nowPlayingY && my <= nowPlayingY + nowPlayingH) {
-            Ripple.press("now-playing", mx, my);
-            openMusic();
-            return true;
         }
         return super.mouseClicked(event, doubleClick);
     }

@@ -57,11 +57,11 @@ public class Interface extends Module {
         // live as the album seed changes, even with no screen open.
         dev.naominet.listclient.ui.theme.MonetTheme.update();
 
-        String buildLabel = "4.0 · DEV";
+        String buildLabel = "4.0";
         int padX = 5;
         int padY = 2;
         int gap = 3;
-        float brandW = brandFont.width("List");
+        float brandW = brandFont.width("Novoline");
         float buildW = M3.labelSmall().width(buildLabel);
         int wmW = (int) Math.ceil(padX * 2 + brandW + gap + buildW);
         int wmH = (int) Math.ceil(Math.max(brandFont.lineHeight(), M3.labelSmall().lineHeight())) + padY * 2;
@@ -72,7 +72,7 @@ public class Interface extends Module {
                 M3.withAlpha(M3.SURFACE_CONTAINER_HIGH, 0xE8));
         float brandY = wmY + (wmH - brandFont.lineHeight()) / 2f;
         float suffixY = wmY + (wmH - M3.labelSmall().lineHeight()) / 2f;
-        float brandEnd = brandFont.drawString(extractor, "List", wmX + padX, brandY, M3.PRIMARY);
+float brandEnd = brandFont.drawString(extractor, "Novoline", wmX + padX, brandY, M3.PRIMARY);
         M3.labelSmall().drawString(extractor, buildLabel, brandEnd + gap, suffixY, M3.ON_SURFACE_VARIANT);
         setXYWH(wmX, wmY, wmW, wmH);
 

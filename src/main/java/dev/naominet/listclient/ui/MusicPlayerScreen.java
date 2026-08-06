@@ -8,6 +8,7 @@ import dev.naominet.listclient.ui.theme.Icons;
 import dev.naominet.listclient.ui.theme.M3;
 import dev.naominet.listclient.ui.theme.MonetTheme;
 import dev.naominet.listclient.ui.theme.Ripple;
+import dev.naominet.listclient.ui.notification.NotificationManager;
 import dev.naominet.listclient.utils.AnimationUtils;
 import dev.naominet.listclient.utils.Lang;
 import dev.naominet.listclient.utils.RenderUtils;
@@ -214,6 +215,7 @@ public class MusicPlayerScreen extends Screen {
                 g.pose().popMatrix();
             }
         }
+        NotificationManager.instance.render(g);
     }
 
     /* ================================================================== */

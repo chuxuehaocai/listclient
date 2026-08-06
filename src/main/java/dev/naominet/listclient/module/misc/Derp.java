@@ -1,4 +1,4 @@
-package dev.naominet.listclient.module.player;
+package dev.naominet.listclient.module.misc;
 
 import dev.naominet.listclient.eventBus.EventTarget;
 import dev.naominet.listclient.eventBus.events.EventPlayerMotionPreUpdate;
@@ -9,7 +9,7 @@ import java.util.Random;
 
 public class Derp extends Module {
     public Derp(){
-        super("Derp", Category.Player);
+        super("Derp", Category.Misc);
     }
 
     @EventTarget

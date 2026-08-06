@@ -8,3 +8,8 @@ mutable field net/minecraft/client/Minecraft user Lnet/minecraft/client/User;
 accessible field net/minecraft/client/Minecraft profileFuture Ljava/util/concurrent/CompletableFuture;
 mutable field net/minecraft/client/Minecraft profileFuture Ljava/util/concurrent/CompletableFuture;
 accessible field net/minecraft/client/Minecraft rightClickDelay I
+accessible method net/minecraft/client/gui/screens/inventory/AbstractContainerScreen slotClicked (Lnet/minecraft/world/inventory/Slot;IILnet/minecraft/world/inventory/ContainerInput;)V
+accessible field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket yRot B
+accessible field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket xRot B
+mutable field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket yRot B
+mutable field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket xRot B

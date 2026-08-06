@@ -11,6 +11,7 @@ import dev.naominet.listclient.ui.notification.NotificationManager;
 import dev.naominet.listclient.ui.notification.NotificationType;
 import dev.naominet.listclient.utils.PacketSnapshot;
 import dev.naominet.listclient.value.Mode;
+import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket;
 import net.minecraft.network.protocol.common.ClientboundPingPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
@@ -49,7 +50,7 @@ public class Disabler extends Module {
 
                 for (PacketSnapshot packetSnapshot : cachedPacketList) {
                     if(currentTime - packetSnapshot.getSnapTime() >= delay){
-                        ((ConnectionExtension) Objects.requireNonNull(mc.getConnection())).sendPacketNoEvent(packetSnapshot.getPacket());
+                        ((ConnectionExtension) Objects.requireNonNull(Objects.requireNonNull(mc.getConnection()).getConnection())).sendPacketNoEvent(packetSnapshot.getPacket());
                     }
                 }
             }
