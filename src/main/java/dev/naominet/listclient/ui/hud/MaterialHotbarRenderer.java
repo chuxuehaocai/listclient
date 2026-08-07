@@ -26,7 +26,7 @@ public final class MaterialHotbarRenderer {
 
         M3.shadowSoft(g, x, y, slotsWidth, height, M3.SHAPE_L);
         M3.roundRect(g, x, y, slotsWidth, height, M3.SHAPE_L,
-                M3.withAlpha(M3.SURFACE_CONTAINER, 0xEE));
+                M3.withAlpha(M3.SURFACE_CONTAINER, 200));
 
         float targetSelectionX = x + selected * 20f + 1f;
         if (Float.isNaN(selectionX) || Math.abs(selectionX - targetSelectionX) > slotsWidth) {

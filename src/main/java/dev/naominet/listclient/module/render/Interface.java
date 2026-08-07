@@ -42,7 +42,7 @@ public class Interface extends Module {
 
     /** M3 type scale – every HUD string goes through TTF. */
     private final TTFFontRenderer brandFont = M3.title();
-    private final TTFFontRenderer listFont = M3.label();
+    private final TTFFontRenderer listFont = M3.body();
 
     public Interface() {
         super("Interface", Category.Render);
@@ -57,22 +57,22 @@ public class Interface extends Module {
         // live as the album seed changes, even with no screen open.
         dev.naominet.listclient.ui.theme.MonetTheme.update();
 
-        String buildLabel = "4.0";
+        String buildLabel = "🐇";
         int padX = 5;
         int padY = 2;
         int gap = 3;
-        float brandW = brandFont.width("Novoline");
+        float brandW = brandFont.width("西八");
         float buildW = M3.labelSmall().width(buildLabel);
         int wmW = (int) Math.ceil(padX * 2 + brandW + gap + buildW);
         int wmH = (int) Math.ceil(Math.max(brandFont.lineHeight(), M3.labelSmall().lineHeight())) + padY * 2;
         int wmX = (int) getX();
         int wmY = (int) getY();
-        M3.shadowSoft(extractor, wmX, wmY, wmW, wmH, M3.pill(wmH));
-        M3.roundRect(extractor, wmX, wmY, wmW, wmH, M3.pill(wmH),
-                M3.withAlpha(M3.SURFACE_CONTAINER_HIGH, 0xE8));
+//        M3.shadowSoft(extractor, wmX, wmY, wmW, wmH, M3.pill(wmH));
+//        M3.roundRect(extractor, wmX, wmY, wmW, wmH, M3.pill(wmH),
+//                M3.withAlpha(M3.SURFACE_CONTAINER_HIGH, 0xE8));
         float brandY = wmY + (wmH - brandFont.lineHeight()) / 2f;
         float suffixY = wmY + (wmH - M3.labelSmall().lineHeight()) / 2f;
-float brandEnd = brandFont.drawString(extractor, "Novoline", wmX + padX, brandY, M3.PRIMARY);
+        float brandEnd = brandFont.drawString(extractor, "西八", wmX + padX, brandY, M3.PRIMARY);
         M3.labelSmall().drawString(extractor, buildLabel, brandEnd + gap, suffixY, M3.ON_SURFACE_VARIANT);
         setXYWH(wmX, wmY, wmW, wmH);
 
@@ -145,9 +145,10 @@ float brandEnd = brandFont.drawString(extractor, "Novoline", wmX + padX, brandY,
 
                 extractor.enableScissor(Math.max(0, rowX - 1), ry, startX, ry + bandThis);
                 try {
-                    M3.roundRect(extractor, rowX, ry, rowW, rowH, M3.SHAPE_XS,
-                            M3.withAlpha(M3.SURFACE_CONTAINER_HIGH, 0xEC), true, false, true, false);
-
+                    M3.roundRect(extractor, rowX, ry, rowW, rowH, 0,
+                            M3.withAlpha(M3.SURFACE_CONTAINER_HIGH, 150), true, false, true, false);
+                    M3.roundRect(extractor, mc.getWindow().getGuiScaledWidth() - 1, ry, 1, rowH, 0,
+                            M3.withAlpha(M3.PRIMARY, 150), true, false, true, false);
                     float textY = ry + (rowH - listFont.lineHeight()) / 2f;
                     float nameX = rowX + textPad;
                     listFont.drawString(extractor, m.getName(), nameX, textY, M3.PRIMARY);
@@ -199,7 +200,7 @@ float brandEnd = brandFont.drawString(extractor, "Novoline", wmX + padX, brandY,
         int textWidth = (int) Math.ceil(Math.max(labelWidth, itemNameWidth));
         int width = padding * 2 + itemBox + gap + textWidth + gap + 25;
         int x = (g.guiWidth() - width) / 2;
-        int targetY = g.guiHeight() - 51;
+        int targetY = g.guiHeight() - 55;
         if (visible && !scaffoldWasVisible) {
             scaffoldY = targetY + 12f;
         }
@@ -210,12 +211,12 @@ float brandEnd = brandFont.drawString(extractor, "Novoline", wmX + padX, brandY,
         M3.shadowSoft(g, x, y, width, height, M3.SHAPE_M, scaffoldVisibility);
         M3.roundRect(g, x, y, width, height, M3.SHAPE_M,
                 M3.fade(M3.SURFACE_CONTAINER_HIGH, 0xEE / 255f * scaffoldVisibility));
-        M3.roundRect(g, x + 3, y + 3, itemBox, itemBox, M3.SHAPE_S,
+        M3.roundRect(g, x + 3, y + 4, itemBox, itemBox, M3.SHAPE_S,
                 M3.fade(M3.SECONDARY_CONTAINER, scaffoldVisibility));
 
         if (!stack.isEmpty()) {
-            g.item(mc.player, stack, x + 5, y + 5, 31);
-            g.itemDecorations(mc.font, stack, x + 5, y + 5);
+            g.item(mc.player, stack, x + 5, y + 6, 31);
+            //g.itemDecorations(mc.font, stack, x + 5, y + 5);
         } else {
             Icons.drawCentered(g, Icons.BLOCK, 10, x + 3 + itemBox / 2f,
                     y + 3 + itemBox / 2f, M3.fade(M3.ON_SECONDARY_CONTAINER, scaffoldVisibility));

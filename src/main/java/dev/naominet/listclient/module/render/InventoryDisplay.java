@@ -16,7 +16,7 @@ public class InventoryDisplay  extends Module {
 
     private static final int HEADER_H = 12;
 
-    private final TTFFontRenderer headerFont = M3.label();
+    private final TTFFontRenderer headerFont = TTFFontRenderer.get(7);
 
     public InventoryDisplay() {
         super("InventoryDisplay", Category.Render);

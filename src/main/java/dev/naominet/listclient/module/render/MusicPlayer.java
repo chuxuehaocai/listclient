@@ -274,68 +274,92 @@ public class MusicPlayer extends Module {
         tickBanner();
         tickSearchDebounce();
 
-        int w = WIDGET_W;
-        int h = WIDGET_H;
-        setXYWH(getX(), getY(), w, h);
-        int x = (int) getX();
-        int y = (int) getY();
+        int albumSize = 48;
+        int x = 4;
+        int y = mc.getWindow().getGuiScaledHeight() - 4 - albumSize;
 
-        // Shared fluid surface with the lyric player, tinted by the current album.
-        M3.shadow(g, x, y, w, h, M3.SHAPE_M);
-        M3.lyricBackground(g, x, y, w, h, currentSong != null);
 
-        // cover = square album art; fall back to circular user avatar only when idle
-        int artSize = 28;
-        int ax = x + 6;
-        int ay = y + (h - artSize) / 2;
         Identifier art = null;
         if (currentSong != null) {
+            M3.shadow(g, x, y, albumSize, albumSize, M3.SHAPE_M);
             art = ensureImage(currentSong.coverUrl, "now_cover_" + currentSong.id, false, true);
             if (art != null) {
-                RenderUtils.drawTexture(g, art, ax, ay, artSize, artSize);
+                RenderUtils.drawTexture(g, art, x, y, albumSize, albumSize);
             }
-        }
-        if (art == null && user != null && user.loggedIn) {
-            art = ensureImage(user.avatarUrl, "avatar_" + user.userId, true, true);
-            if (art != null) {
-                RenderUtils.drawCircularTexture(g, art, ax, ay, artSize);
-            }
-        }
-        if (art == null) {
-            M3.roundRect(g, ax, ay, artSize, artSize, M3.SHAPE_XS, M3.SURFACE_CONTAINER_HIGH);
+
+            TTFFontRenderer titleFont = TTFFontRenderer.get(8);
+            TTFFontRenderer subFont = TTFFontRenderer.get(7);
+
+            int textX = x + albumSize + 6;
+            int baseTextY = y + 16;
+            titleFont.drawString(g, currentSong.name, textX, baseTextY, -1);
+            subFont.drawString(g, currentSong.artists, textX, baseTextY + titleFont.lineHeight() + 3, -1);
         }
 
-        TTFFontRenderer titleFont = M3.label();
-        TTFFontRenderer subFont = M3.labelSmall();
-        int textX = ax + artSize + 6;
-        if (currentSong != null) {
-            titleFont.drawString(g, ellipsize(currentSong.name, 14), textX, y + 4, M3.ON_SURFACE);
-            String sub = currentSong.artists == null ? "" : currentSong.artists;
-            subFont.drawString(g, ellipsize(sub, 16), textX, y + 15, M3.ON_SURFACE_VARIANT);
-            setSuffix(ellipsize(currentSong.name, 12));
-        } else if (user != null && user.loggedIn) {
-            titleFont.drawString(g, ellipsize(user.displayName(), 14), textX, y + 4, M3.ON_SURFACE);
-            subFont.drawString(g, Lang.tr("widget.open_hint"), textX, y + 15, M3.ON_SURFACE_VARIANT);
-            setSuffix(user.displayName());
-        } else {
-            titleFont.drawString(g, "MusicPlayer", textX, y + 4, M3.ON_SURFACE);
-            subFont.drawString(g, Lang.tr("widget.idle_hint"), textX, y + 15, M3.ON_SURFACE_VARIANT);
-            setSuffix("Idle");
-        }
 
-        // transport hint buttons (visual only; click handled in mouseClick)
-        int bx = x + w - 52;
-        int by = y + 8;
-        drawMiniBtn(g, bx, by, audio.isPlaying() ? Icons.PAUSE : Icons.PLAY_ARROW,
-                audio.isPlaying(), "widget-toggle");
-        drawMiniBtn(g, bx + 18, by, Icons.SKIP_NEXT, false, "widget-next");
 
-        // Compact display-only M3 determinate progress indicator.
-        float prog = currentSong == null ? 0f : audio.progress();
-        int barX = textX;
-        int barW = w - (textX - x) - 58;
-        int barY = y + h - 5;
-        M3.linearProgress(g, barX, barY, barW, 2, prog);
+//        int w = WIDGET_W;
+//        int h = WIDGET_H;
+//        int x = (int) getX();
+//        int y = (int) getY();
+//
+//        // Shared fluid surface with the lyric player, tinted by the current album.
+//        M3.shadow(g, x, y - 4, w, h+3, M3.SHAPE_M);
+//        M3.roundRect(g,  x, y, w, h, M3.SHAPE_M, M3.SECONDARY_CONTAINER);
+//        //M3.lyricBackground(g, x, y, w, h, currentSong != null);
+//
+//        // cover = square album art; fall back to circular user avatar only when idle
+//        int artSize = 28;
+//        int ax = x + 6;
+//        int ay = y + (h - artSize) / 2;
+//        Identifier art = null;
+//        if (currentSong != null) {
+//            art = ensureImage(currentSong.coverUrl, "now_cover_" + currentSong.id, false, true);
+//            if (art != null) {
+//                RenderUtils.drawTexture(g, art, ax, ay, artSize, artSize);
+//            }
+//        }
+//        if (art == null && user != null && user.loggedIn) {
+//            art = ensureImage(user.avatarUrl, "avatar_" + user.userId, true, true);
+//            if (art != null) {
+//                RenderUtils.drawCircularTexture(g, art, ax, ay, artSize);
+//            }
+//        }
+//        if (art == null) {
+//            M3.roundRect(g, ax, ay, artSize, artSize, M3.SHAPE_XS, M3.SURFACE_CONTAINER_HIGH);
+//        }
+//
+//        TTFFontRenderer titleFont = M3.label();
+//        TTFFontRenderer subFont = M3.labelSmall();
+//        int textX = ax + artSize + 6;
+//        if (currentSong != null) {
+//            titleFont.drawString(g, ellipsize(currentSong.name, 14), textX, y + 4, M3.ON_SURFACE);
+//            String sub = currentSong.artists == null ? "" : currentSong.artists;
+//            subFont.drawString(g, ellipsize(sub, 16), textX, y + 15, M3.ON_SURFACE_VARIANT);
+//            setSuffix(ellipsize(currentSong.name, 12));
+//        } else if (user != null && user.loggedIn) {
+//            titleFont.drawString(g, ellipsize(user.displayName(), 14), textX, y + 4, M3.ON_SURFACE);
+//            subFont.drawString(g, Lang.tr("widget.open_hint"), textX, y + 15, M3.ON_SURFACE_VARIANT);
+//            setSuffix(user.displayName());
+//        } else {
+//            titleFont.drawString(g, "MusicPlayer", textX, y + 4, M3.ON_SURFACE);
+//            subFont.drawString(g, Lang.tr("widget.idle_hint"), textX, y + 15, M3.ON_SURFACE_VARIANT);
+//            setSuffix("Idle");
+//        }
+//
+//        // transport hint buttons (visual only; click handled in mouseClick)
+//        int bx = x + w - 52;
+//        int by = y + 8;
+//        drawMiniBtn(g, bx, by, audio.isPlaying() ? Icons.PAUSE : Icons.PLAY_ARROW,
+//                audio.isPlaying(), "widget-toggle");
+//        drawMiniBtn(g, bx + 18, by, Icons.SKIP_NEXT, false, "widget-next");
+//
+//        // Compact display-only M3 determinate progress indicator.
+//        float prog = currentSong == null ? 0f : audio.progress();
+//        int barX = textX;
+//        int barW = w - (textX - x) - 58;
+//        int barY = y + h - 8;
+//        M3.linearProgress(g, barX, barY, barW, 2, prog);
     }
 
     /**

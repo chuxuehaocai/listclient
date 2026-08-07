@@ -29,19 +29,20 @@ public class ChestStealer extends Module {
 
         if(screen instanceof InventoryScreen) return;
 
-        ChestMenu chestMenu = (ChestMenu) screen.getMenu();
-        for (int i = 0; i < chestMenu.slots.size(); i++) {
-            Slot slot = chestMenu.getSlot(i);
+        if(screen.getMenu() instanceof ChestMenu chestMenu) {
+            for (int i = 0; i < chestMenu.slots.size(); i++) {
+                Slot slot = chestMenu.getSlot(i);
 
-            if (slot.container != mc.player.getInventory() && !slot.getItem().isEmpty() && timer.hasReached(delay.intValue())) {
-                //mc.interactionManager.clickSlot(chestMenu.containerId, i, 0, SlotActionType.QUICK_MOVE, mc.player);
-                screen.slotClicked(slot, i, 0, ContainerInput.QUICK_MOVE);
-                timer.reset();
+                if (slot.container != mc.player.getInventory() && !slot.getItem().isEmpty() && timer.hasReached(delay.intValue())) {
+                    //mc.interactionManager.clickSlot(chestMenu.containerId, i, 0, SlotActionType.QUICK_MOVE, mc.player);
+                    screen.slotClicked(slot, i, 0, ContainerInput.QUICK_MOVE);
+                    timer.reset();
+                }
             }
-        }
 
-        if (isChestEmpty(screen) || isPlayerInventoryFull()) {
-            mc.player.closeContainer();
+            if (isChestEmpty(screen) || isPlayerInventoryFull()) {
+                mc.player.closeContainer();
+            }
         }
     }
 
@@ -55,6 +56,6 @@ public class ChestStealer extends Module {
     }
 
     private boolean isPlayerInventoryFull() {
-        return mc.player != null && mc.player.getInventory().getFreeSlot() == 0;
+        return mc.player != null && mc.player.getInventory().getFreeSlot() == -1;
     }
 }

@@ -35,9 +35,9 @@ public class LyricDisplay extends Module {
         int x = (int) getX();
         int y = (int) getY();
         setXYWH(x, y, WIDTH, HEIGHT);
-        M3.shadowSoft(event.getExtractor(), x, y, WIDTH, HEIGHT, M3.SHAPE_M);
-        M3.lyricBackground(event.getExtractor(), x, y, WIDTH, HEIGHT,
-                player.currentSong != null);
+//        M3.shadowSoft(event.getExtractor(), x, y, WIDTH, HEIGHT, M3.SHAPE_M);
+//        M3.lyricBackground(event.getExtractor(), x, y, WIDTH, HEIGHT,
+//                player.currentSong != null);
 
         int active = player.currentLyricIndex();
         if (active < 0 || player.lyrics.isEmpty()) {
