@@ -2,6 +2,7 @@ package dev.naominet.listclient.manager;
 
 import dev.naominet.listclient.file.ConfigWriter;
 import dev.naominet.listclient.module.Module;
+import dev.naominet.listclient.module.combat.Critical;
 import dev.naominet.listclient.module.combat.KillAura;
 import dev.naominet.listclient.module.combat.Velocity;
 import dev.naominet.listclient.module.misc.NoCommands;
@@ -56,6 +57,8 @@ public class ModuleManager implements ConfigWriter {
         modules.add(new ChestStealer());
         modules.add(new NoRotate());
         modules.add(new Eagle());
+        modules.add(new FastUse());
+        modules.add(new Critical());
     }
 
     public ArrayList<Module> getModules() {

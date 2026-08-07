@@ -1,5 +1,6 @@
 package dev.naominet.listclient.manager;
 
+import dev.naominet.listclient.module.Module;
 import org.apache.commons.io.FileUtils;
 import org.msgpack.core.MessageBufferPacker;
 import org.msgpack.core.MessagePack;
@@ -31,7 +32,9 @@ public class FileManager {
         if(config.exists()){
             try {
                 MessageUnpacker unpacker = MessagePack.newDefaultUnpacker(FileUtils.readFileToByteArray(config));
-                unpacker.unpackString();
+                String header = unpacker.unpackString();
+                // "MZr" = relative fractions; legacy "MZ" = absolute GUI pixels.
+                Module.positionFormatRelative = "MZr".equals(header);
                 ModuleManager.instance.read(unpacker);
                 unpacker.close();
             } catch (IOException e) {
@@ -52,8 +55,8 @@ public class FileManager {
     public byte[] getConfig(){
         MessageBufferPacker packer = MessagePack.newDefaultBufferPacker();
         try {
-            // header
-            packer.packString("MZ");
+            // "MZr" marks relative (fraction-of-screen) HUD positions.
+            packer.packString("MZr");
             ModuleManager.instance.write(packer);
             packer.close();
         } catch (IOException e) {

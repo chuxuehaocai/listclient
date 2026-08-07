@@ -12,6 +12,7 @@ import dev.naominet.listclient.utils.TimerUtils;
 import dev.naominet.listclient.value.Mode;
 import dev.naominet.listclient.value.Numbers;
 import dev.naominet.listclient.value.Option;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
@@ -43,8 +44,8 @@ public class KillAura extends Module {
     private final Option itemCooldown = new Option("ItemCooldownDelay", true);
     private final Option rayTrace = new Option("RayTrace", true);
     private final Numbers aps = new Numbers("APS", 12.0, 1.0, 20.0, 0.5);
-    private final Numbers aimRange = new Numbers("AimRange", 4.0, 1.0, 6.0, 0.1);
-    private final Numbers attackRange = new Numbers("AttackRange", 3.0, 1.0, 3.0, 0.05);
+    private final Numbers aimRange = new Numbers("AimRange", 4.0, 1.0, 10.0, 0.1);
+    private final Numbers attackRange = new Numbers("AttackRange", 3.0, 1.0, 8.0, 0.05);
     private final Numbers rotationSpeed = new Numbers("RotationSpeed", 180.0, 30.0, 180.0, 1.0);
     private final Numbers fov = new Numbers("FoV", 360.0, 10.0, 360.0, 1.0);
     private final Numbers hurtTime = new Numbers("HurtTime", 10.0, 0.0, 10.0, 1.0);
@@ -158,12 +159,6 @@ public class KillAura extends Module {
             return;
         }
 
-        // One attack per game tick max — sendPosition can fire more than once.
-        int tick = mc.player.tickCount;
-        if (tick == lastAttackTick) {
-            return;
-        }
-
         if (blockMode.isCurrentMode("Hypixel") && blocking.getValue()) {
             releaseBlockKey();
         }
@@ -174,7 +169,6 @@ public class KillAura extends Module {
             mc.gameMode.attack(mc.player, target);
             mc.player.swing(InteractionHand.MAIN_HAND);
             attackTimer.advance(1000.0 / Math.max(1.0, aps.getValue()));
-            lastAttackTick = tick;
             if (mode.isCurrentMode("Switch") && !candidates.isEmpty()) {
                 switchIndex = (switchIndex + 1) % candidates.size();
             }
@@ -310,6 +304,7 @@ public class KillAura extends Module {
     }
 
     private void startBlockKey() {
+        mc.getConnection().send(new ServerboundUseItemPacket(mc.player.swingingArm, 0, mc.player.getYRot(), mc.player.getXRot()));
         if (!ownedUseKey) {
             ownedUseKey = true;
             mc.options.keyUse.setDown(true);

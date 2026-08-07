@@ -23,7 +23,24 @@ public class Module implements ConfigWriter {
     private String suffix;
     private boolean dragging = false;
     public ArrayList<Value<?>> valuesList = new ArrayList<>();
-    private double x = 1, y = 1, width, height;
+    /** Content size in GUI pixels. */
+    private double width, height;
+    /**
+     * HUD anchor as a fraction of the current GUI scaled size (0..1 typical).
+     * Source of truth for persistence so window resizes keep the same relative spot.
+     */
+    private double relX, relY;
+    /** Working absolute GUI pixels, re-derived from {@link #relX}/{@link #relY} on resize. */
+    private double absX = 1, absY = 1;
+    private boolean hasRel;
+    /** Screen size {@link #absX}/{@link #absY} were last derived against. */
+    private int posScreenW, posScreenH;
+    /**
+     * Set by {@link dev.naominet.listclient.manager.FileManager} while loading:
+     * {@code true} for the relative-position format ("MZr"), {@code false} for
+     * legacy absolute-pixel configs ("MZ").
+     */
+    public static boolean positionFormatRelative = true;
     protected Minecraft mc = Minecraft.getInstance();
     static Module instance;
 
@@ -121,11 +138,15 @@ public class Module implements ConfigWriter {
     }
 
     public double getY() {
-        return y;
+        ensureRelative();
+        syncAbsFromRel();
+        return absY;
     }
 
     public double getX() {
-        return x;
+        ensureRelative();
+        syncAbsFromRel();
+        return absX;
     }
 
     float offsetX, offsetY;
@@ -145,16 +166,94 @@ public class Module implements ConfigWriter {
             if (MouseData.mouseAction == 0) {
                 this.dragging = false;
             }
-            this.x = mouseX - offsetX;
-            this.y = mouseY - offsetY;
+            setPosition(mouseX - offsetX, mouseY - offsetY);
         }
     }
 
     protected void setXYWH(double x, double y, double width, double height) {
-        this.x = x;
-        this.y = y;
+        // Only rewrite the relative anchor when the absolute position actually
+        // moves. HUD modules commonly call setXYWH((int) getX(), …) every frame
+        // to refresh size; treating that as a move would quantize relX/relY
+        // toward zero over time.
+        if (Math.abs(x - getX()) > 0.01 || Math.abs(y - getY()) > 0.01) {
+            setPosition(x, y);
+        }
         this.width = width;
         this.height = height;
+    }
+
+    /** Store an absolute GUI-pixel position as a fraction of the current screen. */
+    protected void setPosition(double x, double y) {
+        this.absX = x;
+        this.absY = y;
+        int sw = screenW();
+        int sh = screenH();
+        this.posScreenW = sw;
+        this.posScreenH = sh;
+        if (sw > 0 && sh > 0) {
+            this.relX = x / sw;
+            this.relY = y / sh;
+            this.hasRel = true;
+        }
+    }
+
+    /**
+     * Convert a pure-absolute position (constructor default or legacy config
+     * loaded before the window existed) into a relative fraction the first
+     * time a real screen size is available.
+     */
+    private void ensureRelative() {
+        if (hasRel) {
+            return;
+        }
+        int sw = screenW();
+        int sh = screenH();
+        if (sw <= 0 || sh <= 0) {
+            return;
+        }
+        relX = absX / sw;
+        relY = absY / sh;
+        posScreenW = sw;
+        posScreenH = sh;
+        hasRel = true;
+    }
+
+    /**
+     * Recompute absolute pixels from the relative fraction when the GUI scale
+     * size has changed (window resize / GUI scale change).
+     */
+    private void syncAbsFromRel() {
+        if (!hasRel) {
+            return;
+        }
+        int sw = screenW();
+        int sh = screenH();
+        if (sw <= 0 || sh <= 0) {
+            return;
+        }
+        if (sw == posScreenW && sh == posScreenH) {
+            return;
+        }
+        absX = relX * sw;
+        absY = relY * sh;
+        posScreenW = sw;
+        posScreenH = sh;
+    }
+
+    private int screenW() {
+        try {
+            return mc.getWindow().getGuiScaledWidth();
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private int screenH() {
+        try {
+            return mc.getWindow().getGuiScaledHeight();
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     public static boolean isHovered(float x, float y, float x2, float y2, int mouseX, int mouseY) {
@@ -169,8 +268,13 @@ public class Module implements ConfigWriter {
     public void write(MessageBufferPacker packer) throws IOException {
         packer.packInt(keyCode);
         packer.packBoolean(enable);
-        packer.packDouble(x);
-        packer.packDouble(y);
+        // Always write relative fractions. If we only ever held absolute coords
+        // (e.g. never rendered before first save), convert now.
+        if (!hasRel) {
+            setPosition(absX, absY);
+        }
+        packer.packDouble(relX);
+        packer.packDouble(relY);
         packer.packInt(valuesList.size());
         for (Value<?> value : valuesList) {
             value.write(packer);
@@ -181,8 +285,23 @@ public class Module implements ConfigWriter {
     public void read(MessageUnpacker unpacker) throws IOException {
         setKeyCode(unpacker.unpackInt());
         setEnable(unpacker.unpackBoolean());
-        this.x = unpacker.unpackDouble();
-        this.y = unpacker.unpackDouble();
+        double px = unpacker.unpackDouble();
+        double py = unpacker.unpackDouble();
+        if (positionFormatRelative) {
+            this.relX = px;
+            this.relY = py;
+            this.hasRel = true;
+            // Force re-derive on next getX/getY once the window reports a size.
+            this.posScreenW = 0;
+            this.posScreenH = 0;
+            this.absX = px;
+            this.absY = py;
+        } else {
+            // Legacy absolute-pixel config: convert to relative against the
+            // current screen (or keep absolute until the window is ready).
+            this.hasRel = false;
+            setPosition(px, py);
+        }
         int valueSize = unpacker.unpackInt();
         for (int i = 0; i < valueSize; i++) {
             int type = unpacker.unpackInt();
