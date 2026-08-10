@@ -13,3 +13,5 @@ accessible field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket
 accessible field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket xRot B
 mutable field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket yRot B
 mutable field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket xRot B
+accessible method net/minecraft/client/multiplayer/MultiPlayerGameMode startPrediction (Lnet/minecraft/client/multiplayer/ClientLevel;Lnet/minecraft/client/multiplayer/prediction/PredictiveAction;)V
+accessible method net/minecraft/client/multiplayer/ClientLevel getBlockStatePredictionHandler ()Lnet/minecraft/client/multiplayer/prediction/BlockStatePredictionHandler;

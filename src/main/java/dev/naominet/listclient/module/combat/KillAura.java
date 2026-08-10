@@ -12,6 +12,8 @@ import dev.naominet.listclient.utils.TimerUtils;
 import dev.naominet.listclient.value.Mode;
 import dev.naominet.listclient.value.Numbers;
 import dev.naominet.listclient.value.Option;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
@@ -25,6 +27,7 @@ import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.BlockHitResult;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -304,7 +307,7 @@ public class KillAura extends Module {
     }
 
     private void startBlockKey() {
-        mc.getConnection().send(new ServerboundUseItemPacket(mc.player.swingingArm, 0, mc.player.getYRot(), mc.player.getXRot()));
+        //mc.getConnection().send(new ServerboundUseItemOnPacket(mc.player.swingingArm, new BlockHitResult(mc.player.position(), Direction.NORTH, new BlockPos(0, 0, 0), false), 0));
         if (!ownedUseKey) {
             ownedUseKey = true;
             mc.options.keyUse.setDown(true);

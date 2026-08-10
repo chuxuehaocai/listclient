@@ -1,8 +1,10 @@
 package dev.naominet.listclient.mixin.mixins;
 
 import dev.naominet.listclient.mixin.accessors.ClientInputAccessor;
+import dev.naominet.listclient.module.movement.GuiMove;
 import dev.naominet.listclient.utils.RotationHandler;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.ClientInput;
 import net.minecraft.client.player.KeyboardInput;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
@@ -16,6 +18,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class MixinKeyboardInput {
     @Inject(method = "tick", at = @At("TAIL"))
     private void fixSilentMovement(CallbackInfo ci) {
+        // GuiMove 在屏幕打开时覆写输入（必须在 RotationHandler 修正之前）。
+        GuiMove.applyScreenInput((ClientInput) (Object) this);
+
         LocalPlayer player = Minecraft.getInstance().player;
         if (!RotationHandler.hasMoveFix(player)) {
             return;

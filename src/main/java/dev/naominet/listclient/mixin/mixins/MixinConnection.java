@@ -26,7 +26,7 @@ public class MixinConnection implements ConnectionExtension {
             cancellable = true
     )
     public void sendPacketHook(Packet<?> packet, @Nullable ChannelFutureListener listener, boolean flush, CallbackInfo ci) {
-        EventPacket ep = new EventPacket(packet);
+        EventPacket ep = new EventPacket(packet, false);
         EventManager.instance.call(ep);
 
         if(ep.isCancelled()) ci.cancel();
@@ -38,7 +38,7 @@ public class MixinConnection implements ConnectionExtension {
             cancellable = true
     )
     public void receivePacketHook(final ChannelHandlerContext ctx, final Packet<?> packet, CallbackInfo ci) {
-        EventPacket ep = new EventPacket(packet);
+        EventPacket ep = new EventPacket(packet, true);
         EventManager.instance.call(ep);
 
         if(ep.isCancelled()) ci.cancel();

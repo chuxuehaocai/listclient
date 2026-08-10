@@ -6,6 +6,7 @@
   "refmap": "listclient.refmap.json",
   "mixins": [],
   "client": [
+    "accessors.ClientInputAccessor",
     "mixins.MixinCapeLayer",
     "mixins.MixinChatScreen",
     "mixins.MixinClientPacketListener",
@@ -14,6 +15,7 @@
     "mixins.MixinGui",
     "mixins.MixinHud",
     "mixins.MixinKeyboardHandler",
+    "mixins.MixinKeyboardInput",
     "mixins.MixinLightmapRenderStateExtractor",
     "mixins.MixinLivingEntityRenderer",
     "mixins.MixinLocalPlayer",

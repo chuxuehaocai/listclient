@@ -7,11 +7,14 @@ import dev.naominet.listclient.module.combat.KillAura;
 import dev.naominet.listclient.module.combat.Velocity;
 import dev.naominet.listclient.module.misc.NoCommands;
 import dev.naominet.listclient.module.movement.Fly;
+import dev.naominet.listclient.module.movement.GuiMove;
 import dev.naominet.listclient.module.movement.Speed;
 import dev.naominet.listclient.module.movement.Sprint;
 import dev.naominet.listclient.module.misc.Derp;
 import dev.naominet.listclient.module.player.*;
 import dev.naominet.listclient.module.render.*;
+import dev.naominet.listclient.module.world.AutoTools;
+import dev.naominet.listclient.module.world.Breaker;
 import dev.naominet.listclient.module.world.Disabler;
 import dev.naominet.listclient.module.world.Scaffold;
 import dev.naominet.listclient.module.world.Timer;
@@ -35,6 +38,7 @@ public class ModuleManager implements ConfigWriter {
 
         // Register modules
         modules.add(new Sprint());
+        modules.add(new GuiMove());
         modules.add(new Interface());
         modules.add(new NoCommands());
         modules.add(new Speed());
@@ -46,6 +50,8 @@ public class ModuleManager implements ConfigWriter {
         modules.add(new ClickGui());
         modules.add(new FastPlace());
         modules.add(new ESP());
+        modules.add(new ChestESP());
+        modules.add(new NameTag());
         modules.add(new NoFall());
         modules.add(new FullBright());
         modules.add(new KillAura());
@@ -59,6 +65,9 @@ public class ModuleManager implements ConfigWriter {
         modules.add(new Eagle());
         modules.add(new FastUse());
         modules.add(new Critical());
+        modules.add(new Breaker());
+        modules.add(new AutoTools());
+        modules.add(new Stuck());
     }
 
     public ArrayList<Module> getModules() {
