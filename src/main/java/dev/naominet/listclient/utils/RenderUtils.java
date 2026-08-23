@@ -1,9 +1,15 @@
 package dev.naominet.listclient.utils;
 
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.gui.render.TextureSetup;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.state.gui.GuiElementRenderState;
 import net.minecraft.resources.Identifier;
+import org.joml.Matrix3x2f;
 
 import java.awt.*;
 
@@ -25,6 +31,41 @@ public class RenderUtils {
             str = null;
         }
     }
+
+
+
+
+    public static double getAnimationStateSmooth(double target, double current, double speed) {
+        boolean larger = target > current;
+        if (speed < 0.0) {
+            speed = 0.0;
+        } else if (speed > 1.0) {
+            speed = 1.0;
+        }
+        if (target == current) {
+            return target;
+        }
+        double dif = Math.max(target, current) - Math.min(target, current);
+        double factor = dif * speed;
+        if (factor < 0.1) {
+            factor = 0.1;
+        }
+        if (larger) {
+            if (current + factor > target) {
+                current = target;
+            } else {
+                current += factor;
+            }
+        } else {
+            if (current - factor < target) {
+                current = target;
+            } else {
+                current -= factor;
+            }
+        }
+        return current;
+    }
+
 
 
     public static void drawTexture(GuiGraphicsExtractor dc, String texturePath, String textureId, int x, int y, int width, int height) {
@@ -71,5 +112,51 @@ public class RenderUtils {
 
     public static boolean isHovered(int x, int y, int width, int height, double mouseX, double mouseY) {
         return mouseX > x && mouseX < x + width && mouseY > y && mouseY < y + height;
+    }
+
+    public static void drawGradientSideways(GuiGraphicsExtractor e, double left, double top,
+                                            double right, double bottom, int col1, int col2) {
+        if (right <= left || bottom <= top) return;
+
+        // One quad with per-vertex colors; the GUI pipeline interpolates RGB + alpha
+        // across the fragment, which is exactly what the legacy GL shade-model quad did.
+        // Winding is shoelace-negative (vanilla fill order) because the GUI pipeline
+        // backface-culls the other orientation.
+        float l = (float) left, t = (float) top, r = (float) right, b = (float) bottom;
+        float[] xy = {
+                l, t, l, b, r, b, r, t
+        };
+        int[] col = {
+                col1, col1, col2, col2
+        };
+
+        ScreenRectangle scissor = e.scissorStack.peek();
+        Matrix3x2f pose = new Matrix3x2f(e.pose());
+        ScreenRectangle bounds = new ScreenRectangle(
+                (int) Math.floor(l), (int) Math.floor(t),
+                (int) Math.ceil(r - l), (int) Math.ceil(b - t))
+                .transformMaxBounds(pose);
+        if (scissor != null) {
+            bounds = scissor.intersection(bounds);
+            if (bounds == null) return; // fully clipped
+        }
+        e.guiRenderState.addGuiElement(new GradientQuad(
+                RenderPipelines.GUI, TextureSetup.noTexture(), pose, xy, col, scissor, bounds));
+    }
+
+    /**
+     * Position-color quad for {@link #drawGradientSideways}: same batchable
+     * {@link GuiElementRenderState} shape as the {@code GlShapes} meshes, so it
+     * honors the current pose and scissor and z-orders with vanilla fills.
+     */
+    private record GradientQuad(RenderPipeline pipeline, TextureSetup textureSetup, Matrix3x2f pose,
+                                float[] xy, int[] color, ScreenRectangle scissorArea, ScreenRectangle bounds)
+            implements GuiElementRenderState {
+        @Override
+        public void buildVertices(VertexConsumer vc) {
+            for (int i = 0; i < color.length; i++) {
+                vc.addVertexWith2DPose(pose, xy[i * 2], xy[i * 2 + 1]).setColor(color[i]);
+            }
+        }
     }
 }

@@ -3,6 +3,7 @@ package dev.naominet.listclient.utils;
 import net.minecraft.client.Minecraft;
 
 public class AnimationUtils {
+    private static TimerUtils timerUtil = new TimerUtils();
     /**
      * Non-linear, frame-rate-independent easing: exponential approach toward
      * the target (fast start, smooth deceleration – the M3 "decelerate" feel).
@@ -15,6 +16,22 @@ public class AnimationUtils {
         float next = now + (target - now) * k;
         return Math.abs(target - next) < 0.002f ? target : next;
     }
+
+    public static float moveUD(float current, float end, float smoothSpeed, float minSpeed) {
+        float movement = 0;
+        if (timerUtil.delay(20,true)) {
+            movement = (end - current) * smoothSpeed;
+            if (movement > 0.0f) {
+                movement = Math.max((float) minSpeed, (float) movement);
+                movement = Math.min((float) (end - current), (float) movement);
+            } else if (movement < 0.0f) {
+                movement = Math.min((float) (-minSpeed), (float) movement);
+                movement = Math.max((float) (end - current), (float) movement);
+            }
+        }
+        return current + movement;
+    }
+
 
     /** Cubic ease-out for time-based (0..1) animations. */
     public static float easeOutCubic(float t) {

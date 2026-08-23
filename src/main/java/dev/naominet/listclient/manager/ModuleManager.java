@@ -68,6 +68,8 @@ public class ModuleManager implements ConfigWriter {
         modules.add(new Breaker());
         modules.add(new AutoTools());
         modules.add(new Stuck());
+        modules.add(new AutoArmor());
+        modules.add(new InvCleaner());
     }
 
     public ArrayList<Module> getModules() {

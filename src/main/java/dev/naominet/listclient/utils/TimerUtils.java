@@ -9,6 +9,16 @@ public class TimerUtils {
     private long lastMS;
     private long currentMS = System.currentTimeMillis();
 
+    public boolean delay(float nextDelay, boolean reset) {
+        if (System.currentTimeMillis() - lastMS >= nextDelay) {
+            if (reset) {
+                this.reset();
+            }
+            return true;
+        }
+        return false;
+    }
+
     public long lastReset() {
         return currentMS;
     }

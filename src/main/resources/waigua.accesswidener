@@ -15,3 +15,4 @@ mutable field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket yR
 mutable field net/minecraft/network/protocol/game/ClientboundMoveEntityPacket xRot B
 accessible method net/minecraft/client/multiplayer/MultiPlayerGameMode startPrediction (Lnet/minecraft/client/multiplayer/ClientLevel;Lnet/minecraft/client/multiplayer/prediction/PredictiveAction;)V
 accessible method net/minecraft/client/multiplayer/ClientLevel getBlockStatePredictionHandler ()Lnet/minecraft/client/multiplayer/prediction/BlockStatePredictionHandler;
+accessible method net/minecraft/client/gui/screens/inventory/AbstractRecipeBookScreen slotClicked (Lnet/minecraft/world/inventory/Slot;IILnet/minecraft/world/inventory/ContainerInput;)V
